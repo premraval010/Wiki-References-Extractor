@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import Script from "next/script";
+import { Analytics } from "@vercel/analytics/react";
+import { SpeedInsights } from "@vercel/speed-insights/next";
 import "./globals.css";
 
 const inter = Inter({
@@ -10,6 +12,7 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
+  metadataBase: new URL(process.env.NEXT_PUBLIC_BASE_URL || 'https://wiki-reference-downloader.vercel.app'),
   title: "Download All Wikipedia References as PDFs – Free Wiki Reference Downloader",
   description: "Convert any Wikipedia article's references into downloadable PDFs instantly. Paste a Wikipedia link and get all citations bundled into a clean ZIP file. Fast, simple, accurate, and built for researchers, students, and knowledge workers.",
   keywords: [
@@ -73,41 +76,40 @@ export default function RootLayout({
     <html lang="en" suppressHydrationWarning>
       <body className={`${inter.variable} font-sans antialiased`}>
         <Script
-          id="dark-mode-init"
+          id="theme-init"
           strategy="beforeInteractive"
           dangerouslySetInnerHTML={{
             __html: `
               (function() {
                 try {
-                  const stored = localStorage.getItem('darkMode');
+                  const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
                   const html = document.documentElement;
-                  if (stored === null) {
-                    // Use system preference
-                    const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-                    if (prefersDark) {
-                      html.classList.add('dark');
-                      html.setAttribute('data-theme', 'dark');
-                    } else {
-                      html.classList.remove('dark');
-                      html.setAttribute('data-theme', 'light');
-                    }
+                  if (prefersDark) {
+                    html.classList.add('dark');
                   } else {
-                    // Use stored preference
-                    const isDark = stored === 'true';
-                    if (isDark) {
-                      html.classList.add('dark');
-                      html.setAttribute('data-theme', 'dark');
-                    } else {
-                      html.classList.remove('dark');
-                      html.setAttribute('data-theme', 'light');
-                    }
+                    html.classList.remove('dark');
                   }
                 } catch (e) {}
               })();
             `,
           }}
         />
+        <Script
+          id="ms-clarity"
+          strategy="afterInteractive"
+          dangerouslySetInnerHTML={{
+            __html: `
+              (function(c,l,a,r,i,t,y){
+                c[a]=c[a]||function(){(c[a].q=c[a].q||[]).push(arguments)};
+                t=l.createElement(r);t.async=1;t.src="https://www.clarity.ms/tag/"+i;
+                y=l.getElementsByTagName(r)[0];y.parentNode.insertBefore(t,y);
+              })(window, document, "clarity", "script", "u7op9cbkdm");
+            `,
+          }}
+        />
         {children}
+        <Analytics />
+        <SpeedInsights />
       </body>
     </html>
   );

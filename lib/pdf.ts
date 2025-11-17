@@ -1,4 +1,15 @@
-import puppeteer from 'puppeteer';
+// Use puppeteer-core for Vercel, regular puppeteer for local dev
+let puppeteer: any;
+let chromium: any;
+
+if (process.env.VERCEL === '1') {
+  // Vercel serverless environment
+  puppeteer = require('puppeteer-core');
+  chromium = require('@sparticuz/chromium');
+} else {
+  // Local development
+  puppeteer = require('puppeteer');
+}
 
 /**
  * Checks if a URL points to a PDF file
@@ -37,8 +48,10 @@ export async function downloadPdf(url: string): Promise<Buffer> {
 export async function renderUrlToPdf(url: string): Promise<Buffer> {
   let browser;
   try {
-    // Launch browser with appropriate settings for Next.js
-    browser = await puppeteer.launch({
+    // Configure for Vercel serverless or local development
+    const isVercel = process.env.VERCEL === '1';
+    
+    const launchOptions: any = {
       headless: true,
       args: [
         '--no-sandbox',
@@ -48,8 +61,16 @@ export async function renderUrlToPdf(url: string): Promise<Buffer> {
         '--no-first-run',
         '--no-zygote',
         '--disable-gpu',
+        ...(isVercel && chromium ? chromium.args : []),
       ],
-    });
+    };
+
+    // Use Chromium binary for Vercel, system Chrome for local
+    if (isVercel && chromium) {
+      launchOptions.executablePath = await chromium.executablePath();
+    }
+
+    browser = await puppeteer.launch(launchOptions);
 
     const page = await browser.newPage();
     
