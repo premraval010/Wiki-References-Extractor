@@ -214,32 +214,27 @@ export default function Home({ initialUrl }: HomeProps = {}) {
   };
 
   const createZipFromBuffers = async (refs: ReferenceStatus[]) => {
-    const files = Array.from(pdfBuffersRef.current.entries())
-      .map(([id, buffer]) => {
-        const ref = refs.find((r) => r.id === id);
-        return ref && ref.pdfFilename
-          ? { filename: ref.pdfFilename, content: buffer }
-          : null;
-      })
-      .filter((f): f is { filename: string; content: Uint8Array } => f !== null);
+    // Get only successfully downloaded references
+    const downloadedRefs = refs.filter((r) => r.status === 'downloaded' && r.sourceUrl);
 
-    if (files.length === 0) return null;
+    if (downloadedRefs.length === 0) return null;
 
     // Limit to 250 files max
-    if (files.length > 250) {
-      throw new Error(`Too many files (${files.length}). Maximum 250 files per ZIP.`);
+    if (downloadedRefs.length > 250) {
+      throw new Error(`Too many files (${downloadedRefs.length}). Maximum 250 files per ZIP.`);
     }
 
     try {
-      // Convert Uint8Array to number array more efficiently
-      const filesPayload = files.map((f) => ({
-        filename: f.filename,
-        content: Array.from(f.content as Uint8Array),
+      // Send only reference metadata (small payload) - server will re-process them
+      const referencesPayload = downloadedRefs.map((ref) => ({
+        id: ref.id,
+        title: ref.title,
+        sourceUrl: ref.sourceUrl,
       }));
 
-      // Add timeout for ZIP creation (5 minutes)
+      // Add timeout for ZIP creation (10 minutes to allow for re-processing)
       const zipController = new AbortController();
-      const zipTimeout = setTimeout(() => zipController.abort(), 300000); // 5 minutes
+      const zipTimeout = setTimeout(() => zipController.abort(), 600000); // 10 minutes
 
       let response: Response;
       try {
@@ -248,14 +243,14 @@ export default function Home({ initialUrl }: HomeProps = {}) {
           headers: {
             'Content-Type': 'application/json',
           },
-          body: JSON.stringify({ files: filesPayload }),
+          body: JSON.stringify({ references: referencesPayload }),
           signal: zipController.signal,
         });
         clearTimeout(zipTimeout);
       } catch (fetchError) {
         clearTimeout(zipTimeout);
         if (fetchError instanceof Error && fetchError.name === 'AbortError') {
-          throw new Error('ZIP creation timeout: Request took longer than 5 minutes');
+          throw new Error('ZIP creation timeout: Request took longer than 10 minutes');
         }
         throw new Error(`Network error: ${fetchError instanceof Error ? fetchError.message : 'Failed to connect'}`);
       }

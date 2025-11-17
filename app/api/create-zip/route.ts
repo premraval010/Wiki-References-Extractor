@@ -1,54 +1,74 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createZip } from '@/lib/zip';
+import { isPdfUrl, downloadPdf, renderUrlToPdf, sanitizeFilename } from '@/lib/pdf';
 
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { files } = body;
+    const { references } = body; // Changed: receive references instead of files
 
-    if (!files || !Array.isArray(files)) {
+    if (!references || !Array.isArray(references)) {
       return NextResponse.json(
-        { error: 'Files array is required' },
+        { error: 'References array is required' },
         { status: 400 }
       );
     }
 
     // Validate file count
-    if (files.length === 0) {
+    if (references.length === 0) {
       return NextResponse.json(
-        { error: 'No files provided' },
+        { error: 'No references provided' },
         { status: 400 }
       );
     }
 
-    if (files.length > 250) {
+    if (references.length > 250) {
       return NextResponse.json(
         { error: 'Maximum 250 files allowed per ZIP' },
         { status: 400 }
       );
     }
 
-    console.log(`Creating ZIP with ${files.length} files...`);
+    console.log(`Creating ZIP with ${references.length} references...`);
 
-    // Convert to buffers with better memory handling
+    // Process references server-side to avoid 413 payload limit
     const fileBuffers: { filename: string; content: Buffer }[] = [];
     
-    for (let i = 0; i < files.length; i++) {
-      const f = files[i];
-      if (!f.filename || !f.content || !Array.isArray(f.content)) {
-        console.warn(`Skipping invalid file at index ${i}`);
+    for (let i = 0; i < references.length; i++) {
+      const ref = references[i];
+      if (!ref.id || !ref.sourceUrl || !ref.title) {
+        console.warn(`Skipping invalid reference at index ${i}`);
         continue;
       }
 
       try {
-        const buffer = Buffer.from(f.content);
+        let pdfBuffer: Buffer;
+        let pdfFilename: string;
+
+        // Determine if it's a direct PDF or needs rendering
+        if (isPdfUrl(ref.sourceUrl)) {
+          // Direct PDF download
+          pdfBuffer = await downloadPdf(ref.sourceUrl);
+          const urlPath = new URL(ref.sourceUrl).pathname;
+          const urlFilename = urlPath.split('/').pop() || '';
+          pdfFilename = urlFilename.endsWith('.pdf')
+            ? `${ref.id} - ${urlFilename}`
+            : `${ref.id} - ${sanitizeFilename(ref.title, ref.id)}.pdf`;
+        } else {
+          // Render HTML to PDF using Puppeteer
+          pdfBuffer = await renderUrlToPdf(ref.sourceUrl);
+          pdfFilename = `${ref.id} - ${sanitizeFilename(ref.title, ref.id)}.pdf`;
+        }
+
         fileBuffers.push({
-          filename: f.filename,
-          content: buffer,
+          filename: pdfFilename,
+          content: pdfBuffer,
         });
+
+        console.log(`Processed reference ${ref.id}/${references.length}`);
       } catch (err) {
-        console.error(`Error processing file ${i}:`, err);
-        // Continue with other files
+        console.error(`Error processing reference ${ref.id}:`, err);
+        // Continue with other files - don't fail the whole ZIP
       }
     }
 
