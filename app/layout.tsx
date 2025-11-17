@@ -11,8 +11,11 @@ const inter = Inter({
   display: "swap",
 });
 
+const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || 'https://wiki-reference-downloader.vercel.app';
+const ogImageUrl = `${baseUrl}/wiki-reference-downloader.png`;
+
 export const metadata: Metadata = {
-  metadataBase: new URL(process.env.NEXT_PUBLIC_BASE_URL || 'https://wiki-reference-downloader.vercel.app'),
+  metadataBase: new URL(baseUrl),
   title: "Download All Wikipedia References as PDFs – Free Wiki Reference Downloader",
   description: "Convert any Wikipedia article's references into downloadable PDFs instantly. Paste a Wikipedia link and get all citations bundled into a clean ZIP file. Fast, simple, accurate, and built for researchers, students, and knowledge workers.",
   keywords: [
@@ -32,15 +35,16 @@ export const metadata: Metadata = {
   openGraph: {
     title: "Wiki Reference Downloader – Export All Citations as PDF in One Click",
     description: "Turn any Wikipedia page into a ready-to-download ZIP of all its reference sources in PDF format. Perfect for research, reporting, citations, and academic work.",
-    url: "https://wiki-reference-downloader.vercel.app",
+    url: baseUrl,
     siteName: "Wiki Reference Downloader",
     locale: "en_US",
     type: "website",
     images: [
       {
-        url: "/wiki-reference-downloader.png",
+        url: ogImageUrl,
         width: 1536,
         height: 1024,
+        type: "image/png",
         alt: "Wikipedia Reference Downloader - Extract and download all Wikipedia article references as PDFs",
       },
     ],
@@ -49,7 +53,7 @@ export const metadata: Metadata = {
     card: "summary_large_image",
     title: "Wiki Reference Downloader – Export All Citations as PDF in One Click",
     description: "Paste a Wikipedia link → Get all references as PDFs. Done.",
-    images: ["/wiki-reference-downloader.png"],
+    images: [ogImageUrl],
   },
   robots: {
     index: true,
