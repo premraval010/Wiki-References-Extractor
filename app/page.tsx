@@ -145,13 +145,35 @@ export default function Home({ initialUrl }: HomeProps = {}) {
     );
 
     try {
-      const response = await fetch('/api/process-reference', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(ref),
-      });
+      // Add timeout to fetch request (2 minutes per reference)
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 120000); // 2 minutes
+
+      let response: Response;
+      try {
+        response = await fetch('/api/process-reference', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(ref),
+          signal: controller.signal,
+        });
+        clearTimeout(timeoutId);
+      } catch (fetchError) {
+        clearTimeout(timeoutId);
+        if (fetchError instanceof Error && fetchError.name === 'AbortError') {
+          throw new Error('Request timeout: Processing took too long (2 minutes)');
+        }
+        throw fetchError;
+      }
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ 
+          error: `HTTP ${response.status}: ${response.statusText}` 
+        }));
+        throw new Error(errorData.error || `Server error: ${response.status}`);
+      }
 
       const data: ProcessReferenceResponse = await response.json();
 
@@ -179,10 +201,11 @@ export default function Home({ initialUrl }: HomeProps = {}) {
 
       setProcessedCount((prev) => prev + 1);
     } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'Network error';
       setReferences((prev) =>
         prev.map((r) =>
           r.id === ref.id
-            ? { ...r, status: 'failed' as const, error: 'Network error' }
+            ? { ...r, status: 'failed' as const, error: errorMessage }
             : r
         )
       );
@@ -214,17 +237,34 @@ export default function Home({ initialUrl }: HomeProps = {}) {
         content: Array.from(f.content as Uint8Array),
       }));
 
-      const response = await fetch('/api/create-zip', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ files: filesPayload }),
-      });
+      // Add timeout for ZIP creation (5 minutes)
+      const zipController = new AbortController();
+      const zipTimeout = setTimeout(() => zipController.abort(), 300000); // 5 minutes
+
+      let response: Response;
+      try {
+        response = await fetch('/api/create-zip', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ files: filesPayload }),
+          signal: zipController.signal,
+        });
+        clearTimeout(zipTimeout);
+      } catch (fetchError) {
+        clearTimeout(zipTimeout);
+        if (fetchError instanceof Error && fetchError.name === 'AbortError') {
+          throw new Error('ZIP creation timeout: Request took longer than 5 minutes');
+        }
+        throw new Error(`Network error: ${fetchError instanceof Error ? fetchError.message : 'Failed to connect'}`);
+      }
 
       if (!response.ok) {
-        const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
-        throw new Error(errorData.error || `HTTP ${response.status}: ${response.statusText}`);
+        const errorData = await response.json().catch(() => ({ 
+          error: `HTTP ${response.status}: ${response.statusText}` 
+        }));
+        throw new Error(errorData.error || `Server error: ${response.status}`);
       }
 
       const data = await response.json();
@@ -252,18 +292,38 @@ export default function Home({ initialUrl }: HomeProps = {}) {
     pdfBuffersRef.current.clear();
 
     try {
-      // Step 1: Extract references
-      const extractResponse = await fetch('/api/extract-references', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ wikiUrl }),
-      });
+      // Step 1: Extract references with timeout
+      const extractController = new AbortController();
+      const extractTimeout = setTimeout(() => extractController.abort(), 60000); // 1 minute
+
+      let extractResponse: Response;
+      try {
+        extractResponse = await fetch('/api/extract-references', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ wikiUrl }),
+          signal: extractController.signal,
+        });
+        clearTimeout(extractTimeout);
+      } catch (fetchError) {
+        clearTimeout(extractTimeout);
+        if (fetchError instanceof Error && fetchError.name === 'AbortError') {
+          setError('Request timeout: Failed to extract references (took longer than 1 minute)');
+        } else {
+          setError(`Network error: ${fetchError instanceof Error ? fetchError.message : 'Failed to connect to server'}`);
+        }
+        setLoading(false);
+        return;
+      }
 
       if (!extractResponse.ok) {
-        const errorData = await extractResponse.json();
-        setError(errorData.error || 'Failed to extract references');
+        const errorData = await extractResponse.json().catch(() => ({ 
+          error: `HTTP ${extractResponse.status}: ${extractResponse.statusText}` 
+        }));
+        setError(errorData.error || `Failed to extract references: ${extractResponse.status}`);
+        setLoading(false);
         return;
       }
 
@@ -304,8 +364,20 @@ export default function Home({ initialUrl }: HomeProps = {}) {
       setStartTime(Date.now());
 
       // Step 2: Process references one by one
-      for (const ref of extractData.references) {
-        await processReference(ref);
+      // Add a global timeout to prevent infinite processing (10 minutes total)
+      const globalTimeout = setTimeout(() => {
+        console.warn('Global timeout reached, finalizing with partial results');
+      }, 600000); // 10 minutes
+
+      try {
+        for (const ref of extractData.references) {
+          await processReference(ref);
+        }
+      } catch (processingError) {
+        console.error('Error during reference processing:', processingError);
+        // Continue to show partial results
+      } finally {
+        clearTimeout(globalTimeout);
       }
 
       // Wait a bit for state to update
@@ -321,12 +393,24 @@ export default function Home({ initialUrl }: HomeProps = {}) {
         });
       });
 
-      // Step 4: Create ZIP
-      const zipBase64 = await createZipFromBuffers(finalRefs);
+      // Step 4: Create ZIP (optional, don't fail if this fails)
+      let zipBase64: string | null = null;
+      try {
+        zipBase64 = await createZipFromBuffers(finalRefs);
+      } catch (zipError) {
+        console.error('ZIP creation failed, but continuing with results:', zipError);
+        // Continue without ZIP - user can create it later via the button
+      }
 
-      // Step 5: Set final result
+      // Step 5: Set final result (always show results, even if some failed)
       const successCount = finalRefs.filter((r) => r.status === 'downloaded').length;
       const failedCount = finalRefs.filter((r) => r.status === 'failed').length;
+      const pendingCount = finalRefs.filter((r) => r.status === 'pending').length;
+
+      // Show warning if there are still pending items
+      if (pendingCount > 0) {
+        setError(`Warning: ${pendingCount} reference(s) were not processed. Processing may have been interrupted.`);
+      }
 
       setResult({
         articleTitle: extractData.articleTitle,
@@ -338,13 +422,52 @@ export default function Home({ initialUrl }: HomeProps = {}) {
           id: r.id,
           title: r.title,
           sourceUrl: r.sourceUrl,
-          status: r.status === 'downloaded' ? 'downloaded' : 'failed',
+          status: r.status === 'downloaded' ? 'downloaded' : r.status === 'pending' ? 'failed' : 'failed',
           pdfFilename: r.pdfFilename,
-          error: r.error,
+          error: r.error || (r.status === 'pending' ? 'Processing was interrupted' : undefined),
         })),
       });
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'An unexpected error occurred');
+      console.error('Error in handleSubmit:', err);
+      
+      // Try to show partial results if we have any (show all non-pending references)
+      const currentRefs = references.filter((r) => r.status !== 'pending');
+      if (currentRefs.length > 0) {
+        const successCount = currentRefs.filter((r) => r.status === 'downloaded').length;
+        const failedCount = currentRefs.filter((r) => r.status === 'failed').length;
+        
+        setResult({
+          articleTitle: articleTitle || 'Partial Results',
+          totalReferences: references.length,
+          successCount,
+          failedCount,
+          references: currentRefs.map((r) => ({
+            id: r.id,
+            title: r.title,
+            sourceUrl: r.sourceUrl,
+            status: r.status === 'downloaded' ? 'downloaded' : 'failed',
+            pdfFilename: r.pdfFilename,
+            error: r.error || 'Processing was interrupted',
+          })),
+        });
+      }
+      
+      // Provide more specific error messages
+      let errorMessage = 'An unexpected error occurred';
+      
+      if (err instanceof Error) {
+        if (err.name === 'AbortError' || err.message.includes('timeout')) {
+          errorMessage = 'Request timeout: Processing took too long. Partial results are shown below.';
+        } else if (err.message.includes('Network') || err.message.includes('fetch')) {
+          errorMessage = `Network error: ${err.message}. Please check your connection and try again.`;
+        } else if (err.message.includes('Failed to extract')) {
+          errorMessage = err.message;
+        } else {
+          errorMessage = err.message || 'An unexpected error occurred';
+        }
+      }
+      
+      setError(errorMessage);
     } finally {
       setLoading(false);
       setStartTime(null);
