@@ -26,8 +26,13 @@ html:not(.dark) {
 body {
   background-color: var(--background);
   color: var(--foreground);
-  font-family: var(--font-inter), -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-family: "Linux Libertine", "Georgia", "Times", "Times New Roman", serif;
   transition: background-color 0.2s ease, color 0.2s ease;
+}
+
+/* Wikipedia-style headings */
+h1, h2, h3, h4, h5, h6 {
+  font-family: Arial, "Helvetica Neue", Helvetica, sans-serif;
 }
 
 /* Ensure input fields are interactive */

@@ -28,18 +28,34 @@ export function isPdfUrl(url: string): boolean {
  * Downloads a PDF file directly from a URL
  */
 export async function downloadPdf(url: string): Promise<Buffer> {
-  const response = await fetch(url, {
-    headers: {
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-    },
-  });
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 120000); // 120 seconds timeout
+
+  try {
+    const response = await fetch(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+      },
+      signal: controller.signal,
+    });
+    clearTimeout(timeoutId);
 
   if (!response.ok) {
     throw new Error(`Failed to download PDF: ${response.status} ${response.statusText}`);
   }
 
-  const arrayBuffer = await response.arrayBuffer();
-  return Buffer.from(arrayBuffer);
+    const arrayBuffer = await response.arrayBuffer();
+    return Buffer.from(arrayBuffer);
+  } catch (error) {
+    clearTimeout(timeoutId);
+    if (error instanceof Error && error.name === 'AbortError') {
+      throw new Error('Failed to download PDF: Request timeout (120s exceeded)');
+    }
+    if (error instanceof TypeError && error.message.includes('fetch')) {
+      throw new Error(`Failed to download PDF: Network error or timeout`);
+    }
+    throw new Error(`Failed to download PDF: ${error instanceof Error ? error.message : 'Unknown error'}`);
+  }
 }
 
 /**
@@ -77,11 +93,22 @@ export async function renderUrlToPdf(url: string): Promise<Buffer> {
     // Set viewport for consistent rendering
     await page.setViewport({ width: 1200, height: 800 });
     
-    // Navigate to the URL with timeout
-    await page.goto(url, {
-      waitUntil: 'networkidle2',
-      timeout: 30000,
-    });
+    // Navigate to the URL with increased timeout for slow-loading pages
+    // Try networkidle2 first, but fall back to load if it takes too long
+    try {
+      await page.goto(url, {
+        waitUntil: 'networkidle2',
+        timeout: 90000, // 90 seconds for networkidle2
+      });
+    } catch (timeoutError) {
+      // If networkidle2 times out, try with 'load' which is less strict
+      await page.goto(url, {
+        waitUntil: 'load',
+        timeout: 60000, // 60 seconds for load
+      });
+      // Wait a bit more for any late-loading resources
+      await page.waitForTimeout(2000);
+    }
 
     // Generate PDF
     const pdfBuffer = await page.pdf({

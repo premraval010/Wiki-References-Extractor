@@ -21,6 +21,45 @@ export function validateWikipediaUrl(url: string): boolean {
 }
 
 /**
+ * Extracts the slug and language from a Wikipedia URL
+ * Returns { slug, lang } or null if invalid
+ */
+export function extractWikipediaSlug(url: string): { slug: string; lang: string } | null {
+  try {
+    const urlObj = new URL(url);
+    const match = urlObj.pathname.match(/^\/wiki\/(.+)$/);
+    if (!match) return null;
+    
+    const lang = urlObj.hostname.split('.')[0] || 'en';
+    const slug = decodeURIComponent(match[1]);
+    
+    return { slug, lang };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Reconstructs a Wikipedia URL from slug and language
+ */
+export function buildWikipediaUrl(slug: string, lang: string = 'en'): string {
+  const encodedSlug = encodeURIComponent(slug);
+  return `https://${lang}.wikipedia.org/wiki/${encodedSlug}`;
+}
+
+/**
+ * Extracts the article title from Wikipedia HTML
+ */
+export function extractArticleTitle(html: string): string {
+  const $ = cheerio.load(html);
+  // Try to get title from h1.firstHeading or title tag
+  const title = $('h1.firstHeading').text().trim() || 
+                $('title').text().replace(' - Wikipedia', '').trim() ||
+                'Wikipedia Article';
+  return title;
+}
+
+/**
  * Fetches the HTML content of a Wikipedia article
  */
 export async function fetchArticleHtml(url: string): Promise<string> {

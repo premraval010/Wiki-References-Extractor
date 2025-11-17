@@ -1,9 +1,11 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
+import { useRouter } from 'next/navigation';
 import type { ProcessArticleResponse } from '@/app/api/process-article/route';
 import type { ExtractReferencesResponse } from '@/app/api/process-article/route';
 import type { ProcessReferenceResponse } from '@/app/api/process-reference/route';
+import { extractWikipediaSlug } from '@/lib/wiki';
 
 type ReferenceStatus = {
   id: number;
@@ -14,11 +16,17 @@ type ReferenceStatus = {
   error?: string;
 };
 
-export default function Home() {
-  const [wikiUrl, setWikiUrl] = useState('');
+type HomeProps = {
+  initialUrl?: string;
+};
+
+export default function Home({ initialUrl }: HomeProps = {}) {
+  const router = useRouter();
+  const [wikiUrl, setWikiUrl] = useState(initialUrl || '');
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<ProcessArticleResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [shareableUrl, setShareableUrl] = useState<string>('');
   
   // Progress tracking
   const [articleTitle, setArticleTitle] = useState<string>('');
@@ -45,6 +53,16 @@ export default function Home() {
     }
   }, [expandedErrors]);
 
+  // Auto-submit if initialUrl is provided
+  useEffect(() => {
+    if (initialUrl && !loading && references.length === 0 && !result) {
+      const form = document.querySelector('form');
+      if (form) {
+        form.requestSubmit();
+      }
+    }
+  }, [initialUrl, loading, references.length, result]);
+
   // Calculate estimated time remaining
   useEffect(() => {
     if (startTime && references.length > 0 && processedCount < references.length) {
@@ -67,6 +85,57 @@ export default function Home() {
       }
       return newSet;
     });
+  };
+
+  const resetToHome = () => {
+    // Reset all state
+    setWikiUrl('');
+    setLoading(false);
+    setResult(null);
+    setError(null);
+    setArticleTitle('');
+    setReferences([]);
+    setProcessedCount(0);
+    setStartTime(null);
+    setEstimatedTimeRemaining(null);
+    pdfBuffersRef.current.clear();
+    setExpandedErrors(new Set());
+    setShareableUrl('');
+    
+    // Reset URL to home
+    if (typeof window !== 'undefined') {
+      window.history.pushState({}, '', '/');
+    }
+    
+    // Scroll to top
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const handleShare = async () => {
+    if (shareableUrl) {
+      try {
+        await navigator.clipboard.writeText(shareableUrl);
+        // Show temporary success message
+        const button = document.querySelector('[data-share-button]') as HTMLElement;
+        if (button) {
+          const originalText = button.textContent;
+          button.textContent = 'Copied!';
+          button.classList.add('bg-green-600', 'dark:bg-green-500');
+          setTimeout(() => {
+            button.textContent = originalText;
+            button.classList.remove('bg-green-600', 'dark:bg-green-500');
+          }, 2000);
+        }
+      } catch (err) {
+        // Fallback: select text in input
+        const input = document.createElement('input');
+        input.value = shareableUrl;
+        document.body.appendChild(input);
+        input.select();
+        document.execCommand('copy');
+        document.body.removeChild(input);
+      }
+    }
   };
 
   const processReference = async (ref: { id: number; title: string; sourceUrl: string }) => {
@@ -185,6 +254,19 @@ export default function Home() {
       const extractData: ExtractReferencesResponse = await extractResponse.json();
       setArticleTitle(extractData.articleTitle);
 
+      // Generate shareable URL
+      const slugData = extractWikipediaSlug(wikiUrl);
+      if (slugData) {
+        const slug = encodeURIComponent(`${slugData.lang}:${slugData.slug}`);
+        const baseUrl = typeof window !== 'undefined' ? window.location.origin : '';
+        setShareableUrl(`${baseUrl}/wiki/${slug}`);
+        
+        // Update URL without page reload
+        if (typeof window !== 'undefined') {
+          window.history.pushState({}, '', `/wiki/${slug}`);
+        }
+      }
+
       if (extractData.references.length === 0) {
         setResult({
           articleTitle: extractData.articleTitle,
@@ -254,25 +336,42 @@ export default function Home() {
     }
   };
 
-  const handleDownloadZip = () => {
-    if (!result?.zipBase64) return;
+  const handleDownloadZip = async () => {
+    if (!result || result.successCount === 0) return;
 
     try {
-      const byteCharacters = atob(result.zipBase64);
+      // Get current references with downloaded status
+      const downloadedRefs = references.filter((r) => r.status === 'downloaded' && pdfBuffersRef.current.has(r.id));
+      
+      if (downloadedRefs.length === 0) {
+        setError('No downloaded files available');
+        return;
+      }
+
+      // Create ZIP on-demand from current buffers
+      const zipBase64 = await createZipFromBuffers(references);
+      
+      if (!zipBase64) {
+        setError('Failed to create ZIP file. Please try again.');
+        return;
+      }
+
+      // Download the ZIP
+      const byteCharacters = atob(zipBase64);
       const byteNumbers = Array.from(byteCharacters, (c) => c.charCodeAt(0));
       const byteArray = new Uint8Array(byteNumbers);
       const blob = new Blob([byteArray], { type: 'application/zip' });
-
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `wikipedia-refs-${result.articleTitle.replace(/[^a-z0-9]/gi, '_')}.zip`;
+      a.download = `${articleTitle || 'wikipedia-refs'}.zip`.replace(/[^a-z0-9._-]/gi, '_');
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
     } catch (err) {
-      setError('Failed to download ZIP file');
+      console.error('Failed to download ZIP:', err);
+      setError(`Failed to download ZIP: ${err instanceof Error ? err.message : 'Unknown error'}`);
     }
   };
 
@@ -331,13 +430,44 @@ export default function Home() {
     <div className="min-h-screen bg-white dark:bg-black transition-colors duration-200 py-8 px-4">
       <div className="max-w-4xl mx-auto">
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
-          <div className="flex-1">
-            <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 dark:text-white mb-2">
-              Wikipedia Reference Downloader
-          </h1>
-            <p className="text-sm sm:text-base text-gray-600 dark:text-gray-400">
-              Paste a Wikipedia article URL to extract and download all external references as PDFs
-            </p>
+          <div className="flex-1 flex items-start gap-3">
+            {(references.length > 0 || result) && (
+              <button
+                onClick={resetToHome}
+                className="mt-1 p-2 rounded-lg bg-gray-100 dark:bg-gray-900 hover:bg-gray-200 dark:hover:bg-gray-800 transition-colors border border-gray-200 dark:border-gray-800 flex-shrink-0"
+                aria-label="Start over / Return to home"
+                title="Start over"
+              >
+                <svg className="w-6 h-6 text-gray-700 dark:text-gray-300" fill="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                  <path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/>
+                </svg>
+              </button>
+            )}
+            <div className="flex-1">
+              <div className="flex items-center gap-2 mb-2">
+                <a 
+                  href="/" 
+                  onClick={(e) => {
+                    e.preventDefault();
+                    resetToHome();
+                  }}
+                  className="flex-shrink-0 hover:opacity-80 transition-opacity"
+                  title="Go to home"
+                >
+                  <img 
+                    src="/wiki-icon.png" 
+                    alt="Wikipedia" 
+                    className="w-8 h-8 sm:w-10 sm:h-10"
+                  />
+                </a>
+                <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 dark:text-white">
+                  Wikipedia Reference Downloader
+                </h1>
+              </div>
+              <p className="text-sm sm:text-base text-gray-600 dark:text-gray-400">
+                Paste a Wikipedia article URL to extract and download all external references as PDFs
+              </p>
+            </div>
           </div>
         </div>
 
@@ -467,9 +597,24 @@ export default function Home() {
         {result && (
           <div className="space-y-6">
             <div className="bg-white dark:bg-black rounded-xl shadow-lg dark:shadow-none p-6 border border-gray-200 dark:border-gray-800 transition-colors">
-              <h2 className="text-2xl font-semibold text-gray-900 dark:text-white mb-6">
-                {result.articleTitle}
-              </h2>
+              <div className="flex items-center justify-between mb-6">
+                <h2 className="text-2xl font-semibold text-gray-900 dark:text-white">
+                  {result.articleTitle}
+                </h2>
+                {shareableUrl && (
+                  <button
+                    data-share-button
+                    onClick={handleShare}
+                    className="px-4 py-2 text-sm bg-blue-600 dark:bg-blue-500 text-white rounded-lg hover:bg-blue-700 dark:hover:bg-blue-600 transition-colors font-medium flex items-center gap-2"
+                    title="Copy shareable link"
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z" />
+                    </svg>
+                    Share
+                  </button>
+                )}
+              </div>
               <div className="grid grid-cols-3 gap-4 mb-6">
                 <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-4 border border-gray-200 dark:border-gray-800">
                   <div className="text-sm text-gray-600 dark:text-gray-400 mb-1">Total References</div>
@@ -491,10 +636,11 @@ export default function Home() {
                 </div>
               </div>
 
-              {result.zipBase64 && (
+              {result.successCount > 0 && (
                 <button
                   onClick={handleDownloadZip}
-                  className="w-full px-4 py-3 bg-green-600 dark:bg-green-500 text-white rounded-lg hover:bg-green-700 dark:hover:bg-green-600 transition-colors font-medium"
+                  className="w-full px-4 py-3 bg-green-600 dark:bg-green-500 text-white rounded-lg hover:bg-green-700 dark:hover:bg-green-600 transition-colors font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                  disabled={loading}
                 >
                   Download ZIP ({result.successCount} files)
                 </button>
