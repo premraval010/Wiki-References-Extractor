@@ -34,12 +34,12 @@ export async function POST(request: NextRequest) {
         const urlPath = new URL(sourceUrl).pathname;
         const urlFilename = urlPath.split('/').pop() || '';
         pdfFilename = urlFilename.endsWith('.pdf')
-          ? `${String(id).padStart(2, '0')} - ${urlFilename}`
-          : `${String(id).padStart(2, '0')} - ${sanitizeFilename(title, id)}.pdf`;
+          ? `${id} - ${urlFilename}`
+          : `${id} - ${sanitizeFilename(title, id)}.pdf`;
       } else {
         // Render HTML to PDF using Puppeteer
         pdfBuffer = await renderUrlToPdf(sourceUrl);
-        pdfFilename = `${String(id).padStart(2, '0')} - ${sanitizeFilename(title, id)}.pdf`;
+        pdfFilename = `${id} - ${sanitizeFilename(title, id)}.pdf`;
       }
 
       const response: ProcessReferenceResponse = {

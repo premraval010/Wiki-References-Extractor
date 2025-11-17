@@ -98,12 +98,12 @@ export async function POST(request: NextRequest) {
           const urlPath = new URL(ref.sourceUrl).pathname;
           const urlFilename = urlPath.split('/').pop() || '';
           pdfFilename = urlFilename.endsWith('.pdf')
-            ? `${String(ref.id).padStart(2, '0')} - ${urlFilename}`
-            : `${String(ref.id).padStart(2, '0')} - ${sanitizeFilename(ref.title, ref.id)}.pdf`;
+            ? `${ref.id} - ${urlFilename}`
+            : `${ref.id} - ${sanitizeFilename(ref.title, ref.id)}.pdf`;
         } else {
           // Render HTML to PDF using Puppeteer
           pdfBuffer = await renderUrlToPdf(ref.sourceUrl);
-          pdfFilename = `${String(ref.id).padStart(2, '0')} - ${sanitizeFilename(ref.title, ref.id)}.pdf`;
+          pdfFilename = `${ref.id} - ${sanitizeFilename(ref.title, ref.id)}.pdf`;
         }
 
         files.push({
