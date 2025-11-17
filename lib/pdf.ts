@@ -63,67 +63,134 @@ export async function downloadPdf(url: string): Promise<Buffer> {
  */
 export async function renderUrlToPdf(url: string): Promise<Buffer> {
   let browser;
-  try {
-    // Configure for Vercel serverless or local development
-    const isVercel = process.env.VERCEL === '1';
-    
-    const launchOptions: any = {
-      headless: true,
-      args: [
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
-        '--disable-dev-shm-usage',
-        '--disable-accelerated-2d-canvas',
-        '--no-first-run',
-        '--no-zygote',
-        '--disable-gpu',
-        ...(isVercel && chromium ? chromium.args : []),
-      ],
-    };
+  let page;
+  const maxRetries = 2;
+  let lastError: Error | null = null;
 
-    // Use Chromium binary for Vercel, system Chrome for local
-    if (isVercel && chromium) {
-      launchOptions.executablePath = await chromium.executablePath();
-    }
-
-    browser = await puppeteer.launch(launchOptions);
-
-    const page = await browser.newPage();
-    
-    // Set viewport for consistent rendering
-    await page.setViewport({ width: 1200, height: 800 });
-    
-    // Navigate to the URL with increased timeout for slow-loading pages
-    // Try networkidle2 first, but fall back to load if it takes too long
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
-      await page.goto(url, {
-        waitUntil: 'networkidle2',
-        timeout: 90000, // 90 seconds for networkidle2
-      });
-    } catch (timeoutError) {
-      // If networkidle2 times out, try with 'load' which is less strict
-      await page.goto(url, {
-        waitUntil: 'load',
-        timeout: 60000, // 60 seconds for load
-      });
-      // Wait a bit more for any late-loading resources
-      await page.waitForTimeout(2000);
-    }
+      // Configure for Vercel serverless or local development
+      const isVercel = process.env.VERCEL === '1';
+      
+      const launchOptions: any = {
+        headless: true,
+        args: [
+          '--no-sandbox',
+          '--disable-setuid-sandbox',
+          '--disable-dev-shm-usage',
+          '--disable-accelerated-2d-canvas',
+          '--no-first-run',
+          '--no-zygote',
+          '--disable-gpu',
+          '--disable-http2', // Disable HTTP/2 to avoid protocol errors
+          '--disable-features=IsolateOrigins,site-per-process',
+          ...(isVercel && chromium ? chromium.args : []),
+        ],
+      };
 
-    // Generate PDF
-    const pdfBuffer = await page.pdf({
-      format: 'A4',
-      printBackground: true,
-    });
+      // Use Chromium binary for Vercel, system Chrome for local
+      if (isVercel && chromium) {
+        launchOptions.executablePath = await chromium.executablePath();
+      }
 
-    return Buffer.from(pdfBuffer);
-  } catch (error) {
-    throw new Error(`Failed to render PDF: ${error instanceof Error ? error.message : 'Unknown error'}`);
-  } finally {
-    if (browser) {
+      browser = await puppeteer.launch(launchOptions);
+      page = await browser.newPage();
+      
+      // Set viewport for consistent rendering
+      await page.setViewport({ width: 1200, height: 800 });
+      
+      // Handle page errors and navigation issues
+      page.on('error', (err: Error) => {
+        console.warn('Page error (non-fatal):', err.message);
+      });
+
+      // Navigate to the URL with increased timeout for slow-loading pages
+      // Try networkidle2 first, but fall back to load if it takes too long
+      try {
+        await page.goto(url, {
+          waitUntil: 'networkidle2',
+          timeout: 90000, // 90 seconds for networkidle2
+        });
+      } catch (timeoutError) {
+        // If networkidle2 times out, try with 'load' which is less strict
+        try {
+          await page.goto(url, {
+            waitUntil: 'load',
+            timeout: 60000, // 60 seconds for load
+          });
+          // Wait a bit more for any late-loading resources
+          await page.waitForTimeout(2000);
+        } catch (loadError) {
+          // If load also fails, try with 'domcontentloaded' (fastest)
+          await page.goto(url, {
+            waitUntil: 'domcontentloaded',
+            timeout: 30000, // 30 seconds for domcontentloaded
+          });
+          await page.waitForTimeout(3000); // Wait for resources
+        }
+      }
+
+      // Check if page is still valid (not destroyed)
+      if (page.isClosed()) {
+        throw new Error('Page was closed during navigation');
+      }
+
+      // Generate PDF with error handling
+      let pdfBuffer: Buffer;
+      try {
+        const pdfData = await page.pdf({
+          format: 'A4',
+          printBackground: true,
+        });
+        pdfBuffer = Buffer.from(pdfData);
+      } catch (pdfError) {
+        // If PDF generation fails due to context destruction, retry
+        if (pdfError instanceof Error && 
+            (pdfError.message.includes('Execution context') || 
+             pdfError.message.includes('Target closed'))) {
+          throw new Error('Execution context was destroyed during PDF generation');
+        }
+        throw pdfError;
+      }
+
       await browser.close();
+      return pdfBuffer;
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error));
+      
+      // Clean up browser on error
+      if (browser) {
+        try {
+          await browser.close();
+        } catch (closeError) {
+          // Ignore close errors
+        }
+      }
+
+      // Check if error is retryable
+      const errorMessage = lastError.message.toLowerCase();
+      const isRetryable = 
+        errorMessage.includes('execution context') ||
+        errorMessage.includes('target closed') ||
+        errorMessage.includes('navigation') ||
+        errorMessage.includes('err_http2') ||
+        errorMessage.includes('protocol error') ||
+        errorMessage.includes('net::');
+
+      if (isRetryable && attempt < maxRetries) {
+        console.log(`Retry ${attempt + 1}/${maxRetries} for ${url} due to: ${lastError.message}`);
+        // Wait before retry (exponential backoff)
+        await new Promise(resolve => setTimeout(resolve, 1000 * (attempt + 1)));
+        continue;
+      }
+
+      // If not retryable or max retries reached, throw error
+      throw lastError;
     }
   }
+
+  // This should never be reached, but TypeScript needs it
+  throw lastError || new Error('Failed to render PDF after retries');
 }
 
 /**

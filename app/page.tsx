@@ -145,9 +145,9 @@ export default function Home({ initialUrl }: HomeProps = {}) {
     );
 
     try {
-      // Add timeout to fetch request (2 minutes per reference)
+      // Add timeout to fetch request (4 minutes per reference to handle slow sites)
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 120000); // 2 minutes
+      const timeoutId = setTimeout(() => controller.abort(), 240000); // 4 minutes
 
       let response: Response;
       try {
@@ -163,7 +163,7 @@ export default function Home({ initialUrl }: HomeProps = {}) {
       } catch (fetchError) {
         clearTimeout(timeoutId);
         if (fetchError instanceof Error && fetchError.name === 'AbortError') {
-          throw new Error('Request timeout: Processing took too long (2 minutes)');
+          throw new Error('Request timeout: Processing took too long (4 minutes)');
         }
         throw fetchError;
       }
@@ -844,20 +844,23 @@ export default function Home({ initialUrl }: HomeProps = {}) {
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-white font-medium">
                           {ref.id}
                         </td>
-                        <td className="px-6 py-4 text-sm text-gray-900 dark:text-white">
-                          {ref.title}
+                        <td className="px-6 py-4 text-sm text-gray-900 dark:text-white max-w-md">
+                          <div className="break-words">{ref.title}</div>
                         </td>
-                        <td className="px-6 py-4 text-sm">
+                        <td className="px-6 py-4 text-sm max-w-xs">
                           <a
                             href={ref.sourceUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-                            className="text-blue-600 dark:text-blue-400 hover:underline"
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-blue-600 dark:text-blue-400 hover:underline break-all"
+                            title={ref.sourceUrl}
                           >
-                            {truncateUrl(ref.sourceUrl)}
+                            {ref.sourceUrl.length > 50
+                              ? `${ref.sourceUrl.substring(0, 50)}...`
+                              : ref.sourceUrl}
                           </a>
                         </td>
-                        <td className="px-6 py-4 whitespace-nowrap">
+                        <td className="px-6 py-4 whitespace-nowrap text-sm min-w-[120px]">
                           {ref.status === 'downloaded' ? (
                             <span className="px-3 py-1 inline-flex text-xs leading-5 font-semibold rounded-full bg-green-100 dark:bg-green-950/50 text-green-800 dark:text-green-300 border border-green-200 dark:border-green-900">
                               Downloaded
