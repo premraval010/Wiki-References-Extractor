@@ -33,11 +33,20 @@ export const metadata: Metadata = {
     siteName: "Wiki Reference Downloader",
     locale: "en_US",
     type: "website",
+    images: [
+      {
+        url: "/wiki-reference-downloader.png",
+        width: 1200,
+        height: 630,
+        alt: "Wikipedia Reference Downloader - Extract and download all Wikipedia article references as PDFs",
+      },
+    ],
   },
   twitter: {
     card: "summary_large_image",
     title: "Wiki Reference Downloader – Export All Citations as PDF in One Click",
     description: "Paste a Wikipedia link → Get all references as PDFs. Done.",
+    images: ["/wiki-reference-downloader.png"],
   },
   robots: {
     index: true,
