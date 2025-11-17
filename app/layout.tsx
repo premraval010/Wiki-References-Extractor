@@ -10,8 +10,49 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: "Wikipedia Reference Downloader",
-  description: "Extract and download all external references from Wikipedia articles as PDFs",
+  title: "Download All Wikipedia References as PDFs – Free Wiki Reference Downloader",
+  description: "Convert any Wikipedia article's references into downloadable PDFs instantly. Paste a Wikipedia link and get all citations bundled into a clean ZIP file. Fast, simple, accurate, and built for researchers, students, and knowledge workers.",
+  keywords: [
+    "Wikipedia reference downloader",
+    "Download Wikipedia citations",
+    "Wikipedia references to PDF",
+    "Wiki citation extractor",
+    "Research tool for Wikipedia",
+    "Export Wiki references",
+    "Wikipedia PDF downloader",
+    "Bulk cite downloader",
+    "Academic citation tools",
+  ],
+  authors: [{ name: "Wikipedia Reference Downloader" }],
+  creator: "Wikipedia Reference Downloader",
+  publisher: "Wikipedia Reference Downloader",
+  openGraph: {
+    title: "Wiki Reference Downloader – Export All Citations as PDF in One Click",
+    description: "Turn any Wikipedia page into a ready-to-download ZIP of all its reference sources in PDF format. Perfect for research, reporting, citations, and academic work.",
+    url: "https://wiki-reference-downloader.vercel.app",
+    siteName: "Wiki Reference Downloader",
+    locale: "en_US",
+    type: "website",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "Wiki Reference Downloader – Export All Citations as PDF in One Click",
+    description: "Paste a Wikipedia link → Get all references as PDFs. Done.",
+  },
+  robots: {
+    index: true,
+    follow: true,
+    googleBot: {
+      index: true,
+      follow: true,
+      "max-video-preview": -1,
+      "max-image-preview": "large",
+      "max-snippet": -1,
+    },
+  },
+  alternates: {
+    canonical: "https://wiki-reference-downloader.vercel.app",
+  },
 };
 
 export default function RootLayout({
