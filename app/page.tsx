@@ -202,25 +202,41 @@ export default function Home({ initialUrl }: HomeProps = {}) {
 
     if (files.length === 0) return null;
 
+    // Limit to 250 files max
+    if (files.length > 250) {
+      throw new Error(`Too many files (${files.length}). Maximum 250 files per ZIP.`);
+    }
+
     try {
+      // Convert Uint8Array to number array more efficiently
+      const filesPayload = files.map((f) => ({
+        filename: f.filename,
+        content: Array.from(f.content as Uint8Array),
+      }));
+
       const response = await fetch('/api/create-zip', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({
-          files: files.map((f) => ({
-            filename: f.filename,
-            content: Array.from(f.content as Uint8Array),
-          })),
-        }),
+        body: JSON.stringify({ files: filesPayload }),
       });
 
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
+        throw new Error(errorData.error || `HTTP ${response.status}: ${response.statusText}`);
+      }
+
       const data = await response.json();
+      
+      if (!data.zipBase64) {
+        throw new Error('No ZIP data returned from server');
+      }
+
       return data.zipBase64;
     } catch (err) {
       console.error('Failed to create ZIP:', err);
-      return null;
+      throw err; // Re-throw to let caller handle it
     }
   };
 
@@ -339,12 +355,23 @@ export default function Home({ initialUrl }: HomeProps = {}) {
   const handleDownloadZip = async () => {
     if (!result || result.successCount === 0) return;
 
+    // Disable button during processing
+    const button = document.querySelector('[data-download-zip]') as HTMLButtonElement;
+    if (button) {
+      button.disabled = true;
+      button.textContent = 'Creating ZIP...';
+    }
+
     try {
       // Get current references with downloaded status
       const downloadedRefs = references.filter((r) => r.status === 'downloaded' && pdfBuffersRef.current.has(r.id));
       
       if (downloadedRefs.length === 0) {
         setError('No downloaded files available');
+        if (button) {
+          button.disabled = false;
+          button.textContent = `Download ZIP (${result.successCount} files)`;
+        }
         return;
       }
 
@@ -353,6 +380,10 @@ export default function Home({ initialUrl }: HomeProps = {}) {
       
       if (!zipBase64) {
         setError('Failed to create ZIP file. Please try again.');
+        if (button) {
+          button.disabled = false;
+          button.textContent = `Download ZIP (${result.successCount} files)`;
+        }
         return;
       }
 
@@ -369,9 +400,19 @@ export default function Home({ initialUrl }: HomeProps = {}) {
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
+
+      // Clear any previous errors
+      setError(null);
     } catch (err) {
       console.error('Failed to download ZIP:', err);
-      setError(`Failed to download ZIP: ${err instanceof Error ? err.message : 'Unknown error'}`);
+      const errorMessage = err instanceof Error ? err.message : 'Unknown error';
+      setError(`Failed to download ZIP: ${errorMessage}`);
+    } finally {
+      // Re-enable button
+      if (button) {
+        button.disabled = false;
+        button.textContent = `Download ZIP (${result.successCount} files)`;
+      }
     }
   };
 
@@ -636,6 +677,7 @@ export default function Home({ initialUrl }: HomeProps = {}) {
 
               {result.successCount > 0 && (
                 <button
+                  data-download-zip
                   onClick={handleDownloadZip}
                   className="w-full px-4 py-3 bg-green-600 dark:bg-green-500 text-white rounded-lg hover:bg-green-700 dark:hover:bg-green-600 transition-colors font-medium disabled:opacity-50 disabled:cursor-not-allowed"
                   disabled={loading}
