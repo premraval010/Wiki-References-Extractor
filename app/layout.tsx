@@ -71,10 +71,27 @@ export default function RootLayout({
               (function() {
                 try {
                   const stored = localStorage.getItem('darkMode');
-                  const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-                  const isDark = stored !== null ? stored === 'true' : prefersDark;
-                  if (isDark) {
-                    document.documentElement.classList.add('dark');
+                  const html = document.documentElement;
+                  if (stored === null) {
+                    // Use system preference
+                    const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+                    if (prefersDark) {
+                      html.classList.add('dark');
+                      html.setAttribute('data-theme', 'dark');
+                    } else {
+                      html.classList.remove('dark');
+                      html.setAttribute('data-theme', 'light');
+                    }
+                  } else {
+                    // Use stored preference
+                    const isDark = stored === 'true';
+                    if (isDark) {
+                      html.classList.add('dark');
+                      html.setAttribute('data-theme', 'dark');
+                    } else {
+                      html.classList.remove('dark');
+                      html.setAttribute('data-theme', 'light');
+                    }
                   }
                 } catch (e) {}
               })();

@@ -19,7 +19,7 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<ProcessArticleResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [darkMode, setDarkMode] = useState(false);
+  const [darkMode, setDarkMode] = useState<boolean | null>(null); // null = system, true = dark, false = light
   
   // Progress tracking
   const [articleTitle, setArticleTitle] = useState<string>('');
@@ -30,20 +30,47 @@ export default function Home() {
   const pdfBuffersRef = useRef<Map<number, Uint8Array>>(new Map());
   const [expandedErrors, setExpandedErrors] = useState<Set<number>>(new Set());
 
-  // Initialize dark mode from system preference or localStorage
+  // Initialize dark mode - default to system preference
   useEffect(() => {
-    const stored = localStorage.getItem('darkMode');
-    const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-    const isDark = stored !== null ? stored === 'true' : prefersDark;
-    setDarkMode(isDark);
-    if (isDark) {
-      document.documentElement.classList.add('dark');
-      document.documentElement.setAttribute('data-theme', 'dark');
+    // Check if user has explicitly set a preference
+    const userPreference = localStorage.getItem('darkMode');
+    
+    if (userPreference === null) {
+      // No user preference - use system preference
+      const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+      setDarkMode(null); // null means system preference
+      applyTheme(prefersDark);
+      
+      // Listen for system theme changes
+      const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+      const handleChange = (e: MediaQueryListEvent) => {
+        // Only update if still using system preference
+        const currentPreference = localStorage.getItem('darkMode');
+        if (currentPreference === null) {
+          applyTheme(e.matches);
+        }
+      };
+      mediaQuery.addEventListener('change', handleChange);
+      return () => mediaQuery.removeEventListener('change', handleChange);
     } else {
-      document.documentElement.classList.remove('dark');
-      document.documentElement.setAttribute('data-theme', 'light');
+      // User has explicitly set a preference
+      const isDark = userPreference === 'true';
+      setDarkMode(isDark);
+      applyTheme(isDark);
     }
   }, []);
+
+  // Apply theme function
+  const applyTheme = (isDark: boolean) => {
+    const html = document.documentElement;
+    if (isDark) {
+      html.classList.add('dark');
+      html.setAttribute('data-theme', 'dark');
+    } else {
+      html.classList.remove('dark');
+      html.setAttribute('data-theme', 'light');
+    }
+  };
 
   // Close error popups when clicking outside
   useEffect(() => {
@@ -72,22 +99,33 @@ export default function Home() {
   }, [processedCount, references.length, startTime]);
 
   const toggleDarkMode = () => {
-    const newMode = !darkMode;
-    setDarkMode(newMode);
-    localStorage.setItem('darkMode', String(newMode));
-    
-    // Force update the class and attribute immediately
-    const html = document.documentElement;
-    if (newMode) {
-      html.classList.add('dark');
-      html.setAttribute('data-theme', 'dark');
+    // Cycle: system -> light -> dark -> system
+    if (darkMode === null) {
+      // Currently system, switch to light
+      setDarkMode(false);
+      localStorage.setItem('darkMode', 'false');
+      applyTheme(false);
+    } else if (darkMode === false) {
+      // Currently light, switch to dark
+      setDarkMode(true);
+      localStorage.setItem('darkMode', 'true');
+      applyTheme(true);
     } else {
-      html.classList.remove('dark');
-      html.setAttribute('data-theme', 'light');
+      // Currently dark, switch back to system
+      setDarkMode(null);
+      localStorage.removeItem('darkMode');
+      // Get system preference
+      const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+      applyTheme(prefersDark);
     }
-    
-    // Force a style recalculation
-    void html.offsetHeight;
+  };
+
+  // Get current effective theme for display
+  const getEffectiveTheme = (): boolean => {
+    if (darkMode === null) {
+      return window.matchMedia('(prefers-color-scheme: dark)').matches;
+    }
+    return darkMode;
   };
 
   const toggleErrorExpansion = (refId: number) => {
@@ -363,34 +401,35 @@ export default function Home() {
   return (
     <div className="min-h-screen bg-white dark:bg-black transition-colors duration-200 py-8 px-4">
       <div className="max-w-4xl mx-auto">
-        <div className="flex items-center justify-between mb-6">
-          <div>
-            <h1 className="text-3xl font-bold text-gray-900 dark:text-white mb-2">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
+          <div className="flex-1">
+            <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 dark:text-white mb-2">
               Wikipedia Reference Downloader
-          </h1>
-            <p className="text-gray-600 dark:text-gray-400">
+            </h1>
+            <p className="text-sm sm:text-base text-gray-600 dark:text-gray-400">
               Paste a Wikipedia article URL to extract and download all external references as PDFs
-          </p>
-        </div>
+            </p>
+          </div>
           <button
             onClick={toggleDarkMode}
-            className="p-2.5 rounded-full bg-gray-100 dark:bg-gray-900 hover:bg-gray-200 dark:hover:bg-gray-800 transition-colors border border-gray-200 dark:border-gray-800"
-            aria-label="Toggle dark mode"
+            className="self-start sm:self-auto p-2.5 rounded-full bg-gray-100 dark:bg-gray-900 hover:bg-gray-200 dark:hover:bg-gray-800 transition-colors border border-gray-200 dark:border-gray-800"
+            aria-label="Toggle theme"
+            title={darkMode === null ? 'System theme (click to set light)' : darkMode ? 'Dark theme (click to set system)' : 'Light theme (click to set dark)'}
           >
-            {darkMode ? (
+            {getEffectiveTheme() ? (
               <svg className="w-5 h-5 text-gray-900 dark:text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" />
               </svg>
             ) : (
               <svg className="w-5 h-5 text-gray-900 dark:text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" />
               </svg>
             )}
           </button>
         </div>
 
         <form onSubmit={handleSubmit} className="mb-8">
-          <div className="flex gap-4">
+          <div className="flex flex-col sm:flex-row gap-4">
             <input
               type="url"
               value={wikiUrl}
@@ -404,7 +443,7 @@ export default function Home() {
             <button
               type="submit"
               disabled={loading || !wikiUrl.trim()}
-              className="px-6 py-3 bg-blue-600 dark:bg-blue-500 text-white rounded-lg hover:bg-blue-700 dark:hover:bg-blue-600 disabled:bg-gray-300 dark:disabled:bg-gray-800 disabled:text-gray-500 dark:disabled:text-gray-600 disabled:cursor-not-allowed transition-colors font-medium"
+              className="w-full sm:w-auto px-6 py-3 bg-blue-600 dark:bg-blue-500 text-white rounded-lg hover:bg-blue-700 dark:hover:bg-blue-600 disabled:bg-gray-300 dark:disabled:bg-gray-800 disabled:text-gray-500 dark:disabled:text-gray-600 disabled:cursor-not-allowed transition-colors font-medium"
             >
               {loading ? 'Processing...' : 'Fetch & Download References'}
             </button>
