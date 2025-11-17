@@ -35,7 +35,7 @@ export const metadata: Metadata = {
     type: "website",
     images: [
       {
-        url: "https://wiki-reference-downloader.vercel.app/wiki-reference-downloader.png",
+        url: "/wiki-reference-downloader.png",
         width: 1536,
         height: 1024,
         alt: "Wikipedia Reference Downloader - Extract and download all Wikipedia article references as PDFs",
@@ -46,7 +46,7 @@ export const metadata: Metadata = {
     card: "summary_large_image",
     title: "Wiki Reference Downloader – Export All Citations as PDF in One Click",
     description: "Paste a Wikipedia link → Get all references as PDFs. Done.",
-    images: ["https://wiki-reference-downloader.vercel.app/wiki-reference-downloader.png"],
+    images: ["/wiki-reference-downloader.png"],
   },
   robots: {
     index: true,
