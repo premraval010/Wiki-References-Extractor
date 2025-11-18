@@ -638,6 +638,51 @@ export default function Home({ initialUrl }: HomeProps = {}) {
           </div>
         </div>
 
+        {/* Hero Section - Only show when no results or processing */}
+        {!loading && references.length === 0 && !result && (
+          <div className="mb-12 text-center">
+            <div className="mb-8">
+              <img 
+                src="/wiki-reference-downloader.png" 
+                alt="Wikipedia Reference Downloader" 
+                className="w-full max-w-2xl mx-auto rounded-xl shadow-lg dark:shadow-none border border-gray-200 dark:border-gray-800"
+              />
+            </div>
+            <div className="max-w-2xl mx-auto space-y-4">
+              <h2 className="text-3xl sm:text-4xl font-bold text-gray-900 dark:text-white">
+                Extract & Download All Wikipedia References
+              </h2>
+              <p className="text-lg text-gray-600 dark:text-gray-400">
+                Convert any Wikipedia article's external references into downloadable PDFs instantly. 
+                Perfect for researchers, students, and knowledge workers who need offline access to citation sources.
+              </p>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mt-8">
+                <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-4 border border-gray-200 dark:border-gray-800">
+                  <div className="text-2xl mb-2">⚡</div>
+                  <h3 className="font-semibold text-gray-900 dark:text-white mb-1">Fast & Simple</h3>
+                  <p className="text-sm text-gray-600 dark:text-gray-400">
+                    Paste a URL and get all references bundled in a ZIP file
+                  </p>
+                </div>
+                <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-4 border border-gray-200 dark:border-gray-800">
+                  <div className="text-2xl mb-2">📚</div>
+                  <h3 className="font-semibold text-gray-900 dark:text-white mb-1">Complete Collection</h3>
+                  <p className="text-sm text-gray-600 dark:text-gray-400">
+                    Download all external citations from any Wikipedia article
+                  </p>
+                </div>
+                <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-4 border border-gray-200 dark:border-gray-800">
+                  <div className="text-2xl mb-2">🔒</div>
+                  <h3 className="font-semibold text-gray-900 dark:text-white mb-1">Offline Access</h3>
+                  <p className="text-sm text-gray-600 dark:text-gray-400">
+                    Get all reference PDFs for offline reading and research
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
         <form onSubmit={handleSubmit} className="mb-8">
           <div className="flex flex-col sm:flex-row gap-4">
             <input
