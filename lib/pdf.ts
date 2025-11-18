@@ -29,7 +29,8 @@ export function isPdfUrl(url: string): boolean {
  */
 export async function downloadPdf(url: string): Promise<Buffer> {
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 120000); // 120 seconds timeout
+  // Reduced timeout to 90 seconds to allow for batch processing within Vercel's 300s limit
+  const timeoutId = setTimeout(() => controller.abort(), 90000); // 90 seconds timeout
 
   try {
     const response = await fetch(url, {
@@ -88,6 +89,17 @@ export async function renderUrlToPdf(url: string): Promise<Buffer> {
           '--disable-web-security', // Disable web security to allow cross-origin requests
           '--disable-features=BlockInsecurePrivateNetworkRequests', // Allow insecure requests
           '--disable-features=NetworkService', // Disable network service that might block requests
+          '--disable-blink-features=AutomationControlled', // Avoid detection
+          '--disable-features=TranslateUI', // Disable translate UI
+          '--disable-ipc-flooding-protection', // Disable IPC flooding protection
+          '--disable-renderer-backgrounding', // Disable backgrounding renderer
+          '--disable-backgrounding-occluded-windows', // Disable backgrounding occluded windows
+          '--disable-component-extensions-with-background-pages', // Disable component extensions
+          '--disable-default-apps', // Disable default apps
+          '--disable-extensions', // Disable extensions (which might block requests)
+          '--disable-sync', // Disable sync
+          '--metrics-recording-only', // Metrics recording only
+          '--mute-audio', // Mute audio
           ...(isVercel && chromium ? chromium.args : []),
         ],
       };
@@ -106,11 +118,25 @@ export async function renderUrlToPdf(url: string): Promise<Buffer> {
       // Set user agent to avoid being blocked
       await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
       
+      // Track blocked requests to handle ERR_BLOCKED_BY_CLIENT gracefully
+      let blockedRequestsCount = 0;
+      let hasBlockedRequests = false;
+
       // Intercept and allow all requests to prevent blocking
       await page.setRequestInterception(true);
       page.on('request', (request: any) => {
         // Allow all requests, don't block anything
-        request.continue();
+        // Override headers to avoid detection and blocking
+        const headers = {
+          ...request.headers(),
+          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+          'Accept-Language': 'en-US,en;q=0.9',
+          'Accept-Encoding': 'gzip, deflate, br',
+          'DNT': '1',
+          'Connection': 'keep-alive',
+          'Upgrade-Insecure-Requests': '1',
+        };
+        request.continue({ headers });
       });
       
       // Handle page errors and navigation issues
@@ -118,35 +144,63 @@ export async function renderUrlToPdf(url: string): Promise<Buffer> {
         console.warn('Page error (non-fatal):', err.message);
       });
       
-      // Handle request failures
+      // Handle request failures - ERR_BLOCKED_BY_CLIENT is often non-fatal
+      // Many sites block ads/trackers but main content still loads
       page.on('requestfailed', (request: any) => {
-        // Log but don't fail - some requests may fail but page might still load
-        console.warn('Request failed:', request.url(), request.failure()?.errorText);
+        const failure = request.failure();
+        const errorText = failure?.errorText || '';
+        
+        // Track blocked requests
+        if (errorText.includes('ERR_BLOCKED_BY_CLIENT')) {
+          blockedRequestsCount++;
+          hasBlockedRequests = true;
+          // Only log first few to avoid spam
+          if (blockedRequestsCount <= 3) {
+            console.warn(`Request blocked (likely ad/tracker, non-fatal): ${request.url()}`);
+          }
+        } else {
+          console.warn(`Request failed: ${request.url()}, Error: ${errorText}`);
+        }
       });
 
-      // Navigate to the URL with increased timeout for slow-loading pages
-      // Try networkidle2 first, but fall back to load if it takes too long
+      // Navigate to the URL with optimized timeouts for batch processing
+      // Reduced timeouts to ensure we stay within Vercel's 300s limit when processing batches
+      // Use 'domcontentloaded' first for faster loading, then wait for resources
       try {
+        // Try domcontentloaded first (fastest, doesn't wait for all resources)
         await page.goto(url, {
-          waitUntil: 'networkidle2',
-          timeout: 90000, // 90 seconds for networkidle2
+          waitUntil: 'domcontentloaded',
+          timeout: 30000, // 30 seconds
         });
-      } catch (timeoutError) {
-        // If networkidle2 times out, try with 'load' which is less strict
+        
+        // Wait for page to stabilize - some resources may be blocked but main content loads
+        // This handles ERR_BLOCKED_BY_CLIENT gracefully
+        await new Promise(resolve => setTimeout(resolve, 3000)); // Wait 3 seconds for resources
+        
+        // Try to wait for network to be idle, but don't fail if it times out
+        // Note: Some requests may be blocked (ERR_BLOCKED_BY_CLIENT) but main content should load
+        try {
+          await page.waitForFunction(
+            () => document.readyState === 'complete',
+            { timeout: 5000 }
+          ).catch(() => {
+            // Ignore timeout - page might be ready anyway
+          });
+        } catch {
+          // Ignore - page is likely loaded enough
+        }
+      } catch (navigationError) {
+        // If navigation fails completely, try with 'load'
         try {
           await page.goto(url, {
             waitUntil: 'load',
-            timeout: 60000, // 60 seconds for load
+            timeout: 45000, // 45 seconds for load
           });
-          // Wait a bit more for any late-loading resources
           await new Promise(resolve => setTimeout(resolve, 2000));
         } catch (loadError) {
-          // If load also fails, try with 'domcontentloaded' (fastest)
-          await page.goto(url, {
-            waitUntil: 'domcontentloaded',
-            timeout: 30000, // 30 seconds for domcontentloaded
-          });
-          await new Promise(resolve => setTimeout(resolve, 3000)); // Wait for resources
+          // Last resort: just try to get the page content
+          // Even if some resources fail, we might still get the main content
+          console.warn(`Navigation had issues for ${url}, attempting PDF generation anyway`);
         }
       }
 
@@ -156,6 +210,7 @@ export async function renderUrlToPdf(url: string): Promise<Buffer> {
       }
 
       // Generate PDF with error handling
+      // Even if some requests were blocked (ERR_BLOCKED_BY_CLIENT), main content should be available
       let pdfBuffer: Buffer;
       try {
         const pdfData = await page.pdf({
@@ -163,6 +218,11 @@ export async function renderUrlToPdf(url: string): Promise<Buffer> {
           printBackground: true,
         });
         pdfBuffer = Buffer.from(pdfData);
+        
+        // Log if we had blocked requests but still succeeded
+        if (hasBlockedRequests) {
+          console.log(`PDF generated successfully despite ${blockedRequestsCount} blocked requests (likely ads/trackers)`);
+        }
       } catch (pdfError) {
         // If PDF generation fails due to context destruction, retry
         if (pdfError instanceof Error && 
@@ -170,6 +230,12 @@ export async function renderUrlToPdf(url: string): Promise<Buffer> {
              pdfError.message.includes('Target closed'))) {
           throw new Error('Execution context was destroyed during PDF generation');
         }
+        
+        // If we had blocked requests, provide more helpful error message
+        if (hasBlockedRequests && pdfError instanceof Error) {
+          throw new Error(`PDF generation failed. Some page resources were blocked (${blockedRequestsCount} requests). This may indicate the page requires JavaScript or has strict blocking. Original error: ${pdfError.message}`);
+        }
+        
         throw pdfError;
       }
 
@@ -195,7 +261,29 @@ export async function renderUrlToPdf(url: string): Promise<Buffer> {
         errorMessage.includes('navigation') ||
         errorMessage.includes('err_http2') ||
         errorMessage.includes('protocol error') ||
-        errorMessage.includes('net::');
+        (errorMessage.includes('net::') && !errorMessage.includes('err_blocked_by_client'));
+      
+      // ERR_BLOCKED_BY_CLIENT is often non-fatal - page content may still be available
+      // Try to generate PDF anyway if this is the only error
+      const isBlockedByClient = errorMessage.includes('err_blocked_by_client');
+      if (isBlockedByClient && attempt === 0) {
+        console.log(`ERR_BLOCKED_BY_CLIENT detected for ${url}, attempting PDF generation anyway`);
+        // Try to generate PDF even with blocked requests - main content might be available
+        try {
+          if (page && !page.isClosed()) {
+            const pdfData = await page.pdf({
+              format: 'A4',
+              printBackground: true,
+            });
+            const pdfBuffer = Buffer.from(pdfData);
+            await browser.close();
+            return pdfBuffer;
+          }
+        } catch (pdfError) {
+          // If PDF generation fails, continue to retry logic
+          console.warn('PDF generation failed even with ERR_BLOCKED_BY_CLIENT:', pdfError);
+        }
+      }
 
       if (isRetryable && attempt < maxRetries) {
         console.log(`Retry ${attempt + 1}/${maxRetries} for ${url} due to: ${lastError.message}`);

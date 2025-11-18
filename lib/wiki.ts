@@ -60,6 +60,222 @@ export function extractArticleTitle(html: string): string {
 }
 
 /**
+ * Article metadata extracted from Wikipedia
+ */
+export type ArticleMetadata = {
+  title: string;
+  summary: string;
+  firstPublished?: string;
+  lastModified?: string;
+  editCount?: number;
+  pageViews?: number;
+  wordCount?: number;
+  categories?: string[];
+  languages?: number;
+  images?: number;
+  articleLength?: 'short' | 'medium' | 'long' | 'very long';
+  coordinates?: string;
+  infoboxData?: Record<string, string>;
+};
+
+/**
+ * Extracts article metadata from Wikipedia HTML
+ */
+export function extractArticleMetadata(html: string, url: string): ArticleMetadata {
+  const $ = cheerio.load(html);
+  
+  // Extract title
+  const title = extractArticleTitle(html);
+  
+  // Extract summary (first paragraph or first few sentences)
+  let summary = '';
+  
+  // Try multiple selectors to find the first meaningful paragraph
+  const selectors = [
+    'div.mw-parser-output > p',
+    'div.mw-parser-output p',
+    'p',
+    '.mw-parser-output > p:first-of-type',
+  ];
+  
+  for (const selector of selectors) {
+    const $paras = $(selector);
+    if ($paras.length > 0) {
+      // Try first paragraph
+      let paraText = $paras.first().text().trim();
+      if (paraText.length > 20) {
+        summary = paraText;
+        break;
+      }
+      
+      // If first is too short, try combining first 2-3 paragraphs
+      if (paraText.length < 20 && $paras.length > 1) {
+        const combined = $paras.slice(0, 3).map((_, el) => $(el).text().trim()).get().join(' ');
+        if (combined.length > 20) {
+          summary = combined;
+          break;
+        }
+      }
+    }
+  }
+  
+  // Clean up summary
+  if (summary) {
+    // Remove citation markers like [1], [2], etc.
+    summary = summary.replace(/\[\d+\]/g, '').trim();
+    // Remove extra whitespace
+    summary = summary.replace(/\s+/g, ' ').trim();
+    
+    // Try to get first 2-3 sentences (more interesting than just first sentence)
+    const sentences = summary.match(/[^.!?]+[.!?]+/g);
+    if (sentences && sentences.length > 0) {
+      // Take first 2-3 sentences, but limit to ~250 chars
+      let combined = '';
+      for (let i = 0; i < Math.min(3, sentences.length); i++) {
+        if ((combined + sentences[i]).length <= 250) {
+          combined += sentences[i];
+        } else {
+          break;
+        }
+      }
+      if (combined.length > 20) {
+        summary = combined.trim();
+      } else {
+        // Fallback: just truncate to 200 chars
+        summary = summary.substring(0, 200).trim();
+        if (summary.length === 200) summary += '...';
+      }
+    } else {
+      // No sentence endings found, just truncate intelligently
+      if (summary.length > 200) {
+        // Try to cut at word boundary
+        const truncated = summary.substring(0, 200);
+        const lastSpace = truncated.lastIndexOf(' ');
+        summary = lastSpace > 150 ? truncated.substring(0, lastSpace) + '...' : truncated + '...';
+      }
+    }
+  }
+  
+  // Final fallback: if still no summary, try getting any text from the article
+  if (!summary || summary.length < 20) {
+    const $anyText = $('div.mw-parser-output').first();
+    if ($anyText.length > 0) {
+      const text = $anyText.text().trim();
+      if (text.length > 20) {
+        summary = text.substring(0, 200).trim();
+        const lastSpace = summary.lastIndexOf(' ');
+        if (lastSpace > 150) {
+          summary = summary.substring(0, lastSpace) + '...';
+        } else {
+          summary += '...';
+        }
+      }
+    }
+  }
+  
+  // Extract last modified date from history link or metadata
+  let lastModified: string | undefined;
+  const $lastModified = $('li#footer-info-lastmod, .mw-history-histlinks a').first();
+  if ($lastModified.length > 0) {
+    const modifiedText = $lastModified.text().trim();
+    // Try to extract date from text like "Last edited on 15 January 2024"
+    const dateMatch = modifiedText.match(/(\d{1,2}\s+\w+\s+\d{4})/);
+    if (dateMatch) {
+      lastModified = dateMatch[1];
+    }
+  }
+  
+  // Extract edit count (approximate from revision history)
+  let editCount: number | undefined;
+  const $editCount = $('a[href*="action=history"]').first();
+  if ($editCount.length > 0) {
+    const editText = $editCount.text();
+    const countMatch = editText.match(/(\d+[\d,]*)\s*(?:edit|revision)/i);
+    if (countMatch) {
+      editCount = parseInt(countMatch[1].replace(/,/g, ''), 10);
+    }
+  }
+  
+  // Extract word count (approximate from article text)
+  let wordCount: number | undefined;
+  const articleText = $('div.mw-parser-output').text();
+  if (articleText) {
+    const words = articleText.split(/\s+/).filter(w => w.length > 0);
+    wordCount = words.length;
+  }
+  
+  // Extract categories
+  const categories: string[] = [];
+  $('div#catlinks a[href*="/wiki/Category:"]').each((_, el) => {
+    const category = $(el).text().trim();
+    if (category && !category.includes('Hidden categories')) {
+      categories.push(category);
+    }
+  });
+  
+  // Count available languages (from interlanguage links)
+  const languages = $('div#p-lang li').length;
+  
+  // Count images in the article
+  const images = $('div.mw-parser-output img:not(.mw-logo-fallback)').length;
+  
+  // Determine article length category
+  let articleLength: 'short' | 'medium' | 'long' | 'very long' | undefined;
+  if (wordCount) {
+    if (wordCount < 1000) articleLength = 'short';
+    else if (wordCount < 5000) articleLength = 'medium';
+    else if (wordCount < 15000) articleLength = 'long';
+    else articleLength = 'very long';
+  }
+  
+  // Extract coordinates if available (for location articles)
+  let coordinates: string | undefined;
+  const $coordinates = $('span.geo, .geo-dec, .coordinates');
+  if ($coordinates.length > 0) {
+    const coordText = $coordinates.first().text().trim();
+    if (coordText) {
+      coordinates = coordText;
+    }
+  }
+  
+  // Extract some infobox data (common fields)
+  const infoboxData: Record<string, string> = {};
+  const $infobox = $('table.infobox, .infobox');
+  if ($infobox.length > 0) {
+    $infobox.find('tr').each((_, row) => {
+      const $row = $(row);
+      const $th = $row.find('th');
+      const $td = $row.find('td');
+      if ($th.length > 0 && $td.length > 0) {
+        const key = $th.text().trim().replace(/:/g, '');
+        const value = $td.text().trim();
+        if (key && value && key.length < 50 && value.length < 100) {
+          // Only store a few interesting fields
+          const interestingKeys = ['location', 'established', 'founded', 'opened', 'type', 'status', 'country', 'region'];
+          if (interestingKeys.some(k => key.toLowerCase().includes(k))) {
+            infoboxData[key] = value;
+          }
+        }
+      }
+    });
+  }
+  
+  return {
+    title,
+    summary: summary || 'No summary available',
+    lastModified,
+    editCount,
+    wordCount,
+    categories: categories.slice(0, 5), // Limit to 5 categories
+    languages: languages > 0 ? languages : undefined,
+    images: images > 0 ? images : undefined,
+    articleLength,
+    coordinates,
+    infoboxData: Object.keys(infoboxData).length > 0 ? infoboxData : undefined,
+  };
+}
+
+/**
  * Fetches the HTML content of a Wikipedia article
  */
 export async function fetchArticleHtml(url: string): Promise<string> {

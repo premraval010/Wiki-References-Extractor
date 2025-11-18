@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import type { ProcessArticleResponse } from '@/app/api/process-article/route';
 import type { ExtractReferencesResponse } from '@/app/api/process-article/route';
 import type { ProcessReferenceResponse } from '@/app/api/process-reference/route';
+import type { ArticleMetadata } from '@/lib/wiki';
 import { extractWikipediaSlug } from '@/lib/wiki';
 
 type ReferenceStatus = {
@@ -30,6 +31,7 @@ export default function Home({ initialUrl }: HomeProps = {}) {
   
   // Progress tracking
   const [articleTitle, setArticleTitle] = useState<string>('');
+  const [articleMetadata, setArticleMetadata] = useState<ArticleMetadata | null>(null);
   const [references, setReferences] = useState<ReferenceStatus[]>([]);
   const [processedCount, setProcessedCount] = useState(0);
   const [startTime, setStartTime] = useState<number | null>(null);
@@ -102,6 +104,7 @@ export default function Home({ initialUrl }: HomeProps = {}) {
     setResult(null);
     setError(null);
     setArticleTitle('');
+    setArticleMetadata(null);
     setReferences([]);
     setProcessedCount(0);
     setStartTime(null);
@@ -146,6 +149,9 @@ export default function Home({ initialUrl }: HomeProps = {}) {
     }
   };
 
+  /**
+   * Process a single reference (for small batches - faster for < 10 references)
+   */
   const processReference = async (ref: { id: number; title: string; sourceUrl: string }) => {
     // Update status to processing
     setReferences((prev) =>
@@ -153,9 +159,9 @@ export default function Home({ initialUrl }: HomeProps = {}) {
     );
 
     try {
-      // Add timeout to fetch request (6 minutes per reference to handle slow sites)
+      // Use shorter timeout for single requests (2 minutes)
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 360000); // 6 minutes
+      const timeoutId = setTimeout(() => controller.abort(), 120000); // 2 minutes
 
       let response: Response;
       try {
@@ -171,7 +177,7 @@ export default function Home({ initialUrl }: HomeProps = {}) {
       } catch (fetchError) {
         clearTimeout(timeoutId);
         if (fetchError instanceof Error && fetchError.name === 'AbortError') {
-          throw new Error('Request timeout: Processing took too long (6 minutes)');
+          throw new Error('Request timeout: Processing took too long (2 minutes)');
         }
         throw fetchError;
       }
@@ -221,6 +227,120 @@ export default function Home({ initialUrl }: HomeProps = {}) {
     }
   };
 
+  /**
+   * Process a batch of references in parallel
+   * Uses server-side batch processing for better performance
+   * Only use for larger batches (10+ references)
+   */
+  const processReferenceBatch = async (
+    batch: { id: number; title: string; sourceUrl: string }[],
+    batchSize: number = 15
+  ) => {
+    // Mark all as processing
+    setReferences((prev) =>
+      prev.map((r) => {
+        const inBatch = batch.some((b) => b.id === r.id);
+        return inBatch ? { ...r, status: 'processing' as const } : r;
+      })
+    );
+
+    try {
+      // Use optimized timeout: 4 minutes (240s) to stay well under Vercel's 300s limit
+      // Account for network overhead and processing time
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 240000); // 4 minutes
+
+      let response: Response;
+      try {
+        response = await fetch('/api/process-references-batch', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ 
+            references: batch,
+            batchSize: batchSize 
+          }),
+          signal: controller.signal,
+        });
+        clearTimeout(timeoutId);
+      } catch (fetchError) {
+        clearTimeout(timeoutId);
+        if (fetchError instanceof Error && fetchError.name === 'AbortError') {
+          // Mark all as failed due to timeout
+          setReferences((prev) =>
+            prev.map((r) => {
+              const inBatch = batch.some((b) => b.id === r.id);
+              return inBatch
+                ? { ...r, status: 'failed' as const, error: 'Request timeout: Batch processing took too long (4 minutes)' }
+                : r;
+            })
+          );
+          setProcessedCount((prev) => prev + batch.length);
+          return;
+        }
+        throw fetchError;
+      }
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ 
+          error: `HTTP ${response.status}: ${response.statusText}` 
+        }));
+        // Mark all as failed
+        setReferences((prev) =>
+          prev.map((r) => {
+            const inBatch = batch.some((b) => b.id === r.id);
+            return inBatch
+              ? { ...r, status: 'failed' as const, error: errorData.error || `Server error: ${response.status}` }
+              : r;
+          })
+        );
+        setProcessedCount((prev) => prev + batch.length);
+        return;
+      }
+
+      const data = await response.json();
+      const { results } = data;
+
+      // Update references with results
+      setReferences((prev) =>
+        prev.map((r) => {
+          const result = results.find((res: ProcessReferenceResponse) => res.id === r.id);
+          if (result) {
+            // Store PDF buffer if downloaded
+            if (result.status === 'downloaded' && result.pdfBase64) {
+              const byteCharacters = atob(result.pdfBase64);
+              const byteNumbers = Array.from(byteCharacters, (c) => c.charCodeAt(0));
+              const byteArray = new Uint8Array(byteNumbers);
+              pdfBuffersRef.current.set(r.id, byteArray);
+            }
+            return {
+              ...r,
+              status: result.status,
+              pdfFilename: result.pdfFilename,
+              error: result.error,
+            };
+          }
+          return r;
+        })
+      );
+
+      setProcessedCount((prev) => prev + batch.length);
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'Network error';
+      // Mark all as failed
+      setReferences((prev) =>
+        prev.map((r) => {
+          const inBatch = batch.some((b) => b.id === r.id);
+          return inBatch
+            ? { ...r, status: 'failed' as const, error: errorMessage }
+            : r;
+        })
+      );
+      setProcessedCount((prev) => prev + batch.length);
+    }
+  };
+
   const createZipFromBuffers = async (refs: ReferenceStatus[]) => {
     // Get only successfully downloaded references
     const downloadedRefs = refs.filter((r) => r.status === 'downloaded' && r.sourceUrl);
@@ -240,10 +360,10 @@ export default function Home({ initialUrl }: HomeProps = {}) {
         sourceUrl: ref.sourceUrl,
       }));
 
-      // Add timeout for ZIP creation (5 minutes - Vercel limit is 300s, but we need buffer)
+      // Add timeout for ZIP creation (4 minutes - stays under Vercel's 300s limit with buffer)
       // Processing happens in parallel batches, so should be faster
       const zipController = new AbortController();
-      const zipTimeout = setTimeout(() => zipController.abort(), 300000); // 5 minutes
+      const zipTimeout = setTimeout(() => zipController.abort(), 240000); // 4 minutes
 
       let response: Response;
       try {
@@ -333,6 +453,14 @@ export default function Home({ initialUrl }: HomeProps = {}) {
 
       const extractData: ExtractReferencesResponse = await extractResponse.json();
       setArticleTitle(extractData.articleTitle);
+      if (extractData.metadata) {
+        // Add references count to metadata for display
+        const metadataWithRefs = {
+          ...extractData.metadata,
+          referencesCount: extractData.references.length,
+        };
+        setArticleMetadata(metadataWithRefs as ArticleMetadata & { referencesCount?: number });
+      }
 
       // Generate shareable URL
       const slugData = extractWikipediaSlug(wikiUrl);
@@ -367,21 +495,76 @@ export default function Home({ initialUrl }: HomeProps = {}) {
       setReferences(initialReferences);
       setStartTime(Date.now());
 
-      // Step 2: Process references one by one
-      // Add a global timeout to prevent infinite processing (10 minutes total)
-      const globalTimeout = setTimeout(() => {
-        console.warn('Global timeout reached, finalizing with partial results');
-      }, 600000); // 10 minutes
+      // Step 2: Process references with controlled client-side parallelism
+      // Best practice: Process 4 references concurrently on client side
+      // Each request is independent, so failures don't cascade
+      // This is 3-4x faster than sequential but safer than server-side batch processing
+      const totalReferences = extractData.references.length;
+      const concurrency = Math.min(4, totalReferences); // Process 4 at a time (optimal balance)
+      
+      console.log(`Processing ${totalReferences} references with ${concurrency} concurrent requests`);
 
       try {
-        for (const ref of extractData.references) {
-          await processReference(ref);
+        // Process with controlled concurrency using a worker pool pattern
+        // This ensures we never exceed the concurrency limit
+        const processWithConcurrency = async (
+          items: { id: number; title: string; sourceUrl: string }[],
+          limit: number
+        ) => {
+          let index = 0;
+
+          const worker = async () => {
+            while (true) {
+              // Atomically get next index (JavaScript is single-threaded, so this is safe)
+              const currentIndex = index++;
+              if (currentIndex >= items.length) break;
+
+              const ref = items[currentIndex];
+              await processReference(ref);
+            }
+          };
+
+          // Start workers up to concurrency limit
+          const workers = Array(Math.min(limit, items.length))
+            .fill(null)
+            .map(() => worker());
+
+          // Wait for all workers to complete
+          await Promise.all(workers);
+        };
+
+        await processWithConcurrency(extractData.references, concurrency);
+
+        // Retry failed references once (only for network/timeout errors, not permanent failures)
+        // Get current state of references for retry logic
+        let currentRefs: ReferenceStatus[] = [];
+        await new Promise<void>((resolve) => {
+          setReferences((refs) => {
+            currentRefs = refs;
+            resolve();
+            return refs;
+          });
+        });
+
+        const failedRefs = currentRefs.filter(r => r.status === 'failed' && r.error && 
+          (r.error.includes('timeout') || r.error.includes('Network') || r.error.includes('fetch')));
+        
+        if (failedRefs.length > 0) {
+          console.log(`Retrying ${failedRefs.length} failed references...`);
+          
+          // Sequential retry - reliable approach
+          for (const ref of failedRefs) {
+            await processReference({
+              id: ref.id,
+              title: ref.title,
+              sourceUrl: ref.sourceUrl,
+            });
+            await new Promise((resolve) => setTimeout(resolve, 300)); // Small delay between retries
+          }
         }
       } catch (processingError) {
         console.error('Error during reference processing:', processingError);
         // Continue to show partial results
-      } finally {
-        clearTimeout(globalTimeout);
       }
 
       // Wait a bit for state to update
@@ -577,6 +760,31 @@ export default function Home({ initialUrl }: HomeProps = {}) {
     }
   };
 
+  const handleDownloadIndividual = (refId: number, pdfFilename?: string) => {
+    const pdfBuffer = pdfBuffersRef.current.get(refId);
+    if (!pdfBuffer) {
+      setError('PDF file not available. Please try downloading the ZIP file instead.');
+      return;
+    }
+
+    try {
+      // Create blob from buffer
+      const blob = new Blob([pdfBuffer], { type: 'application/pdf' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      // Use the stored filename or generate one
+      const filename = pdfFilename || `reference-${refId}.pdf`;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setError('Failed to download PDF file');
+    }
+  };
+
   const truncateUrl = (url: string, maxLength: number = 50) => {
     if (url.length <= maxLength) return url;
     return url.substring(0, maxLength) + '...';
@@ -598,46 +806,113 @@ export default function Home({ initialUrl }: HomeProps = {}) {
     <div className="min-h-screen bg-white dark:bg-black transition-colors duration-200 py-8 px-4">
       <div className="max-w-4xl mx-auto">
         <div className="relative mb-6">
-          <div className="flex items-start justify-between gap-4">
-            <div className="flex-1">
-              <div className="flex items-center gap-2 mb-2">
-                <a 
-                  href="/" 
-                  onClick={(e) => {
-                    e.preventDefault();
-                    resetToHome();
-                  }}
-                  className="flex-shrink-0 hover:opacity-80 transition-opacity"
-                  title="Go to home"
-                >
-                  <img 
-                    src="/wiki-icon.png" 
-                    alt="Wikipedia" 
-                    className="w-8 h-8 sm:w-10 sm:h-10"
-                  />
-                </a>
-                <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 dark:text-white" style={{ fontFamily: "'Linux Libertine', 'Georgia', 'Times', 'Source Serif 4', serif" }}>
-                  Wikipedia Reference Downloader
-          </h1>
-              </div>
-              <p className="text-sm sm:text-base text-gray-600 dark:text-gray-400">
-                Paste a Wikipedia article URL to extract and download all external references as PDFs
-              </p>
-            </div>
+          {/* Mobile Layout: Horizontal with icons on sides */}
+          <div className="flex sm:hidden items-center justify-between mb-4">
+            <a 
+              href="/" 
+              onClick={(e) => {
+                e.preventDefault();
+                resetToHome();
+              }}
+              className="flex-shrink-0 hover:opacity-80 transition-opacity"
+              title="Go to home"
+            >
+              <img 
+                src="/wiki-icon.png" 
+                alt="Wikipedia" 
+                className="w-8 h-8"
+              />
+            </a>
+            <h1 className="flex-1 text-xl font-bold text-gray-900 dark:text-white text-left ml-4" style={{ fontFamily: "'Linux Libertine', 'Georgia', 'Times', 'Source Serif 4', serif" }}>
+              Wikipedia Reference Downloader
+            </h1>
             {(references.length > 0 || result) && (
               <button
                 onClick={resetToHome}
-                className="absolute top-0 right-0 sm:relative sm:top-auto sm:right-auto p-2 rounded-lg bg-gray-100 dark:bg-gray-900 hover:bg-gray-200 dark:hover:bg-gray-800 transition-colors border border-gray-200 dark:border-gray-800 flex-shrink-0"
+                className="flex-shrink-0 ml-4 p-2 rounded-lg bg-gray-100 dark:bg-gray-900 hover:bg-gray-200 dark:hover:bg-gray-800 transition-colors border border-gray-200 dark:border-gray-800"
                 aria-label="Start over / Return to home"
                 title="Start over"
               >
-                <svg className="w-5 h-5 sm:w-6 sm:h-6 text-gray-700 dark:text-gray-300" fill="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                <svg className="w-5 h-5 text-gray-700 dark:text-gray-300" fill="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
                   <path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/>
                 </svg>
               </button>
             )}
           </div>
+          
+          {/* Desktop Layout: Centered */}
+          <div className="hidden sm:flex flex-col items-center text-center mb-6">
+            <div className="flex items-center gap-2 mb-2">
+              <a 
+                href="/" 
+                onClick={(e) => {
+                  e.preventDefault();
+                  resetToHome();
+                }}
+                className="flex-shrink-0 hover:opacity-80 transition-opacity"
+                title="Go to home"
+              >
+                <img 
+                  src="/wiki-icon.png" 
+                  alt="Wikipedia" 
+                  className="w-10 h-10"
+                />
+              </a>
+              <h1 className="text-3xl font-bold text-gray-900 dark:text-white" style={{ fontFamily: "'Linux Libertine', 'Georgia', 'Times', 'Source Serif 4', serif" }}>
+                Wikipedia Reference Downloader
+              </h1>
+            </div>
+            <p className="text-base text-gray-600 dark:text-gray-400">
+              Paste a Wikipedia article URL to extract and download all external references as PDFs
+            </p>
+            {(references.length > 0 || result) && (
+              <button
+                onClick={resetToHome}
+                className="absolute top-0 right-0 p-2 rounded-lg bg-gray-100 dark:bg-gray-900 hover:bg-gray-200 dark:hover:bg-gray-800 transition-colors border border-gray-200 dark:border-gray-800 flex-shrink-0"
+                aria-label="Start over / Return to home"
+                title="Start over"
+              >
+                <svg className="w-6 h-6 text-gray-700 dark:text-gray-300" fill="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                  <path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/>
+                </svg>
+              </button>
+            )}
+          </div>
+          
+          {/* Description text for mobile */}
+          <p className="sm:hidden text-sm text-gray-600 dark:text-gray-400 text-center mb-6">
+            Paste a Wikipedia article URL to extract and download all external references as PDFs
+          </p>
         </div>
+
+        {/* Search Form - Moved above hero section */}
+        <form onSubmit={handleSubmit} className="mb-8">
+          <div className="flex flex-col sm:flex-row gap-4">
+            <input
+              type="url"
+              value={wikiUrl}
+              onChange={(e) => setWikiUrl(e.target.value)}
+              placeholder="https://en.wikipedia.org/wiki/..."
+              className="flex-1 px-4 py-3 border border-gray-300 dark:border-gray-800 rounded-lg bg-white dark:bg-black text-gray-900 dark:text-white placeholder-gray-500 dark:placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-500 focus:border-transparent transition-colors"
+              disabled={loading}
+              autoComplete="url"
+              spellCheck={false}
+            />
+            <button
+              type="submit"
+              disabled={loading || !wikiUrl.trim()}
+              className={`w-full sm:w-auto px-6 py-3 text-white rounded-lg transition-colors font-medium ${
+                loading
+                  ? 'bg-gray-300 dark:bg-gray-800 text-gray-500 dark:text-gray-600 cursor-not-allowed'
+                  : wikiUrl.trim() 
+                    ? 'bg-green-600 dark:bg-green-500 hover:bg-green-700 dark:hover:bg-green-600 cursor-pointer' 
+                    : 'bg-blue-600 dark:bg-blue-500 hover:bg-blue-700 dark:hover:bg-blue-600 cursor-not-allowed'
+              }`}
+            >
+              {loading ? 'Processing...' : wikiUrl.trim() ? 'Fetch & Download References' : 'Paste URL'}
+            </button>
+          </div>
+        </form>
 
         {/* Hero Section - Only show when no results or processing */}
         {!loading && references.length === 0 && !result && (
@@ -677,27 +952,83 @@ export default function Home({ initialUrl }: HomeProps = {}) {
           </div>
         )}
 
-        <form onSubmit={handleSubmit} className="mb-8">
-          <div className="flex flex-col sm:flex-row gap-4">
-            <input
-              type="url"
-              value={wikiUrl}
-              onChange={(e) => setWikiUrl(e.target.value)}
-              placeholder="https://en.wikipedia.org/wiki/..."
-              className="flex-1 px-4 py-3 border border-gray-300 dark:border-gray-800 rounded-lg bg-white dark:bg-black text-gray-900 dark:text-white placeholder-gray-500 dark:placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-500 focus:border-transparent transition-colors"
-              disabled={loading}
-              autoComplete="url"
-              spellCheck={false}
-            />
-            <button
-              type="submit"
-              disabled={loading || !wikiUrl.trim()}
-              className="w-full sm:w-auto px-6 py-3 bg-blue-600 dark:bg-blue-500 text-white rounded-lg hover:bg-blue-700 dark:hover:bg-blue-600 disabled:bg-gray-300 dark:disabled:bg-gray-800 disabled:text-gray-500 dark:disabled:text-gray-600 disabled:cursor-not-allowed transition-colors font-medium"
-            >
-              {loading ? 'Processing...' : 'Fetch & Download References'}
-            </button>
+        {/* Show metadata while loading, even before processing starts */}
+        {loading && articleMetadata && references.length === 0 && (
+          <div className="bg-white dark:bg-black rounded-xl shadow-lg dark:shadow-none p-6 border border-gray-200 dark:border-gray-800 mb-6">
+            <h2 className="text-xl font-semibold text-gray-900 dark:text-white mb-4">
+              {articleTitle || 'Analyzing Article...'}
+            </h2>
+            <div className="p-4 bg-gray-50 dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800">
+              {articleMetadata.summary && (
+                <>
+                  <p className="text-sm text-gray-700 dark:text-gray-300 mb-3 italic">
+                    {articleMetadata.summary}
+                  </p>
+                  <hr className="border-gray-200 dark:border-gray-800 mb-3" />
+                </>
+              )}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+                {articleMetadata.lastModified && (
+                  <div>
+                    <span className="text-gray-500 dark:text-gray-400 font-medium">Last Modified:</span>
+                    <p className="text-gray-900 dark:text-white mt-1">{articleMetadata.lastModified}</p>
+                  </div>
+                )}
+                {articleMetadata.editCount && (
+                  <div>
+                    <span className="text-gray-500 dark:text-gray-400 font-medium">Edits:</span>
+                    <p className="text-gray-900 dark:text-white mt-1">{articleMetadata.editCount.toLocaleString()}</p>
+                  </div>
+                )}
+                {articleMetadata.wordCount && (
+                  <div>
+                    <span className="text-gray-500 dark:text-gray-400 font-medium">Words:</span>
+                    <p className="text-gray-900 dark:text-white mt-1">{articleMetadata.wordCount.toLocaleString()}</p>
+                  </div>
+                )}
+                {articleMetadata.articleLength && (
+                  <div>
+                    <span className="text-gray-500 dark:text-gray-400 font-medium">Length:</span>
+                    <p className="text-gray-900 dark:text-white mt-1 capitalize">{articleMetadata.articleLength}</p>
+                  </div>
+                )}
+                {articleMetadata.languages && (
+                  <div>
+                    <span className="text-gray-500 dark:text-gray-400 font-medium">Languages:</span>
+                    <p className="text-gray-900 dark:text-white mt-1">{articleMetadata.languages}</p>
+                  </div>
+                )}
+                {(references.length > 0 || (articleMetadata as any)?.referencesCount) && (
+                  <div>
+                    <span className="text-gray-500 dark:text-gray-400 font-medium">References:</span>
+                    <p className="text-gray-900 dark:text-white mt-1">{references.length || (articleMetadata as any)?.referencesCount || 0}</p>
+                  </div>
+                )}
+              </div>
+              {articleMetadata.infoboxData && Object.keys(articleMetadata.infoboxData).length > 0 && (
+                <div className="mt-3 pt-3 border-t border-gray-200 dark:border-gray-800">
+                  <span className="text-gray-500 dark:text-gray-400 font-medium text-xs mb-2 block">Quick Facts:</span>
+                  <div className="grid grid-cols-2 gap-2 text-xs">
+                    {Object.entries(articleMetadata.infoboxData).slice(0, 4).map(([key, value]) => (
+                      <div key={key}>
+                        <span className="text-gray-500 dark:text-gray-400 font-medium">{key}:</span>
+                        <span className="text-gray-700 dark:text-gray-300 ml-1">{value}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {articleMetadata.categories && articleMetadata.categories.length > 0 && (
+                <div className="mt-3 pt-3 border-t border-gray-200 dark:border-gray-800">
+                  <span className="text-gray-500 dark:text-gray-400 font-medium text-xs">Categories: </span>
+                  <span className="text-gray-700 dark:text-gray-300 text-xs">
+                    {articleMetadata.categories.join(', ')}
+                  </span>
+                </div>
+              )}
+            </div>
           </div>
-        </form>
+        )}
 
         {loading && references.length > 0 && (
           <div className="bg-white dark:bg-black rounded-xl shadow-lg dark:shadow-none p-6 border border-gray-200 dark:border-gray-800 mb-6">
@@ -716,6 +1047,80 @@ export default function Home({ initialUrl }: HomeProps = {}) {
                   </span>
                 ) : null}
               </div>
+
+              {/* Article Metadata Display */}
+              {articleMetadata && (
+                <div className="mb-4 p-4 bg-gray-50 dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800">
+                  {articleMetadata.summary && (
+                    <>
+                      <p className="text-sm text-gray-700 dark:text-gray-300 mb-3 italic">
+                        {articleMetadata.summary}
+                      </p>
+                      <hr className="border-gray-200 dark:border-gray-800 mb-3" />
+                    </>
+                  )}
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+                    {articleMetadata.lastModified && (
+                      <div>
+                        <span className="text-gray-500 dark:text-gray-400 font-medium">Last Modified:</span>
+                        <p className="text-gray-900 dark:text-white mt-1">{articleMetadata.lastModified}</p>
+                      </div>
+                    )}
+                    {articleMetadata.editCount && (
+                      <div>
+                        <span className="text-gray-500 dark:text-gray-400 font-medium">Edits:</span>
+                        <p className="text-gray-900 dark:text-white mt-1">{articleMetadata.editCount.toLocaleString()}</p>
+                      </div>
+                    )}
+                    {articleMetadata.wordCount && (
+                      <div>
+                        <span className="text-gray-500 dark:text-gray-400 font-medium">Words:</span>
+                        <p className="text-gray-900 dark:text-white mt-1">{articleMetadata.wordCount.toLocaleString()}</p>
+                      </div>
+                    )}
+                    {articleMetadata.articleLength && (
+                      <div>
+                        <span className="text-gray-500 dark:text-gray-400 font-medium">Length:</span>
+                        <p className="text-gray-900 dark:text-white mt-1 capitalize">{articleMetadata.articleLength}</p>
+                      </div>
+                    )}
+                    {articleMetadata.languages && (
+                      <div>
+                        <span className="text-gray-500 dark:text-gray-400 font-medium">Languages:</span>
+                        <p className="text-gray-900 dark:text-white mt-1">{articleMetadata.languages}</p>
+                      </div>
+                    )}
+                    {(references.length > 0 || (articleMetadata as any)?.referencesCount) && (
+                      <div>
+                        <span className="text-gray-500 dark:text-gray-400 font-medium">References:</span>
+                        <p className="text-gray-900 dark:text-white mt-1">{references.length || (articleMetadata as any)?.referencesCount || 0}</p>
+                      </div>
+                    )}
+                  </div>
+                  {articleMetadata.infoboxData && Object.keys(articleMetadata.infoboxData).length > 0 && (
+                    <div className="mt-3 pt-3 border-t border-gray-200 dark:border-gray-800">
+                      <span className="text-gray-500 dark:text-gray-400 font-medium text-xs mb-2 block">Quick Facts:</span>
+                      <div className="grid grid-cols-2 gap-2 text-xs">
+                        {Object.entries(articleMetadata.infoboxData).slice(0, 4).map(([key, value]) => (
+                          <div key={key}>
+                            <span className="text-gray-500 dark:text-gray-400 font-medium">{key}:</span>
+                            <span className="text-gray-700 dark:text-gray-300 ml-1">{value}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {articleMetadata.categories && articleMetadata.categories.length > 0 && (
+                    <div className="mt-3 pt-3 border-t border-gray-200 dark:border-gray-800">
+                      <span className="text-gray-500 dark:text-gray-400 font-medium text-xs">Categories: </span>
+                      <span className="text-gray-700 dark:text-gray-300 text-xs">
+                        {articleMetadata.categories.join(', ')}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              )}
+
               <div className="w-full bg-gray-200 dark:bg-gray-800 rounded-full h-3 overflow-hidden">
                 <div
                   className="bg-blue-600 dark:bg-blue-500 h-full rounded-full transition-all duration-300 ease-out"
@@ -762,9 +1167,21 @@ export default function Home({ initialUrl }: HomeProps = {}) {
                       </span>
                     )}
                     {ref.status === 'downloaded' && (
-                      <span className="px-2 py-1 text-xs rounded-full bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300">
-                        ✓ Downloaded
-                      </span>
+                      <div className="flex items-center gap-2">
+                        <span className="px-2 py-1 text-xs rounded-full bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300">
+                          ✓ Downloaded
+                        </span>
+                        <button
+                          onClick={() => handleDownloadIndividual(ref.id, ref.pdfFilename)}
+                          className="px-2 py-1 text-xs text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300 hover:underline flex items-center gap-1 transition-colors"
+                          title={`Download ${ref.pdfFilename || 'PDF'}`}
+                        >
+                          <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                          </svg>
+                          Download
+                        </button>
+                      </div>
                     )}
                     {ref.status === 'failed' && (
                       <div className="relative error-popup-container">
@@ -915,9 +1332,21 @@ export default function Home({ initialUrl }: HomeProps = {}) {
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm min-w-[120px]">
                           {ref.status === 'downloaded' ? (
-                            <span className="px-3 py-1 inline-flex text-xs leading-5 font-semibold rounded-full bg-green-100 dark:bg-green-950/50 text-green-800 dark:text-green-300 border border-green-200 dark:border-green-900">
-                              Downloaded
-                            </span>
+                            <div className="flex items-center gap-2">
+                              <span className="px-3 py-1 inline-flex text-xs leading-5 font-semibold rounded-full bg-green-100 dark:bg-green-950/50 text-green-800 dark:text-green-300 border border-green-200 dark:border-green-900">
+                                Downloaded
+                              </span>
+                              <button
+                                onClick={() => handleDownloadIndividual(ref.id, ref.pdfFilename)}
+                                className="px-2 py-1 text-xs text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300 hover:underline flex items-center gap-1 transition-colors"
+                                title={`Download ${ref.pdfFilename || 'PDF'}`}
+                              >
+                                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                                </svg>
+                                Download
+                              </button>
+                            </div>
                           ) : (
                             <div className="relative inline-block error-popup-container">
                               <button

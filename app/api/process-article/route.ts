@@ -5,6 +5,7 @@ import {
   fetchArticleHtml,
   extractReferences,
 } from '@/lib/wiki';
+import type { ArticleMetadata } from '@/lib/wiki';
 import { isPdfUrl, downloadPdf, renderUrlToPdf, sanitizeFilename } from '@/lib/pdf';
 import { createZip } from '@/lib/zip';
 
@@ -31,6 +32,7 @@ export type ExtractReferencesResponse = {
     title: string;
     sourceUrl: string;
   }[];
+  metadata?: ArticleMetadata;
 };
 
 export async function POST(request: NextRequest) {

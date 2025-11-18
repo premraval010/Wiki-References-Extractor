@@ -4,6 +4,7 @@ import {
   validateWikipediaUrl,
   fetchArticleHtml,
   extractReferences,
+  extractArticleMetadata,
 } from '@/lib/wiki';
 import type { ExtractReferencesResponse } from '@/app/api/process-article/route';
 
@@ -38,9 +39,9 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Extract article title
-    const $ = cheerio.load(html);
-    const articleTitle = $('h1.firstHeading').text().trim() || 'Unknown Article';
+    // Extract article metadata
+    const metadata = extractArticleMetadata(html, wikiUrl);
+    const articleTitle = metadata.title;
 
     // Extract references
     const references = extractReferences(html);
@@ -48,6 +49,7 @@ export async function POST(request: NextRequest) {
     const response: ExtractReferencesResponse = {
       articleTitle,
       references,
+      metadata, // Include metadata in response
     };
 
     return NextResponse.json(response);

@@ -34,7 +34,7 @@ export async function POST(request: NextRequest) {
     // Process references server-side to avoid 413 payload limit
     // Process in parallel batches for better performance
     const fileBuffers: { filename: string; content: Buffer }[] = [];
-    const batchSize = 5; // Process 5 files in parallel
+    const batchSize = 10; // Process 10 files in parallel (increased from 5 for better performance)
     
     // Process references in batches
     for (let i = 0; i < references.length; i += batchSize) {
@@ -99,11 +99,11 @@ export async function POST(request: NextRequest) {
 
     console.log(`Processing ${fileBuffers.length} valid files...`);
 
-    // Create ZIP with timeout handling (increased timeout for large archives)
+    // Create ZIP with timeout handling (optimized for Vercel's 300s limit)
     const zipBuffer = await Promise.race([
       createZip(fileBuffers),
       new Promise<never>((_, reject) => 
-        setTimeout(() => reject(new Error('ZIP creation timeout')), 180000) // 3 minutes for ZIP creation itself
+        setTimeout(() => reject(new Error('ZIP creation timeout')), 120000) // 2 minutes for ZIP creation itself
       )
     ]);
 

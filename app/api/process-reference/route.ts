@@ -53,12 +53,25 @@ export async function POST(request: NextRequest) {
 
       return NextResponse.json(response);
     } catch (error) {
+      // Format error message to be more user-friendly
+      let errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      
+      // Make ERR_BLOCKED_BY_CLIENT errors more user-friendly
+      if (errorMessage.includes('ERR_BLOCKED_BY_CLIENT') || errorMessage.includes('err_blocked_by_client')) {
+        errorMessage = 'Page resources were blocked (likely ads/trackers). The page may require JavaScript or have strict security policies that prevent automated access.';
+      } else if (errorMessage.includes('blocked requests')) {
+        // Already formatted by PDF library
+        errorMessage = errorMessage;
+      } else if (errorMessage.includes('net::')) {
+        errorMessage = `Network error: ${errorMessage.replace(/net::/gi, '').replace(/err_/gi, '').replace(/_/g, ' ')}`;
+      }
+
       const response: ProcessReferenceResponse = {
         id,
         title,
         sourceUrl,
         status: 'failed',
-        error: error instanceof Error ? error.message : 'Unknown error',
+        error: errorMessage,
       };
 
       return NextResponse.json(response);
