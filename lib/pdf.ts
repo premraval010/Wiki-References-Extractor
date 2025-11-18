@@ -119,14 +119,14 @@ export async function renderUrlToPdf(url: string): Promise<Buffer> {
             timeout: 60000, // 60 seconds for load
           });
           // Wait a bit more for any late-loading resources
-          await page.waitForTimeout(2000);
+          await new Promise(resolve => setTimeout(resolve, 2000));
         } catch (loadError) {
           // If load also fails, try with 'domcontentloaded' (fastest)
           await page.goto(url, {
             waitUntil: 'domcontentloaded',
             timeout: 30000, // 30 seconds for domcontentloaded
           });
-          await page.waitForTimeout(3000); // Wait for resources
+          await new Promise(resolve => setTimeout(resolve, 3000)); // Wait for resources
         }
       }
 
