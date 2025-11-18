@@ -588,44 +588,46 @@ export default function Home({ initialUrl }: HomeProps = {}) {
   return (
     <div className="min-h-screen bg-white dark:bg-black transition-colors duration-200 py-8 px-4">
       <div className="max-w-4xl mx-auto">
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
-          <div className="flex-1">
-            <div className="flex items-center gap-2 mb-2">
-              <a 
-                href="/" 
-                onClick={(e) => {
-                  e.preventDefault();
-                  resetToHome();
-                }}
-                className="flex-shrink-0 hover:opacity-80 transition-opacity"
-                title="Go to home"
-              >
-                <img 
-                  src="/wiki-icon.png" 
-                  alt="Wikipedia" 
-                  className="w-8 h-8 sm:w-10 sm:h-10"
-                />
-              </a>
-              <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 dark:text-white">
-                Wikipedia Reference Downloader
+        <div className="relative mb-6">
+          <div className="flex items-start justify-between gap-4">
+            <div className="flex-1">
+              <div className="flex items-center gap-2 mb-2">
+                <a 
+                  href="/" 
+                  onClick={(e) => {
+                    e.preventDefault();
+                    resetToHome();
+                  }}
+                  className="flex-shrink-0 hover:opacity-80 transition-opacity"
+                  title="Go to home"
+                >
+                  <img 
+                    src="/wiki-icon.png" 
+                    alt="Wikipedia" 
+                    className="w-8 h-8 sm:w-10 sm:h-10"
+                  />
+                </a>
+                <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 dark:text-white">
+                  Wikipedia Reference Downloader
           </h1>
+              </div>
+              <p className="text-sm sm:text-base text-gray-600 dark:text-gray-400">
+                Paste a Wikipedia article URL to extract and download all external references as PDFs
+              </p>
             </div>
-            <p className="text-sm sm:text-base text-gray-600 dark:text-gray-400">
-              Paste a Wikipedia article URL to extract and download all external references as PDFs
-            </p>
+            {(references.length > 0 || result) && (
+              <button
+                onClick={resetToHome}
+                className="absolute top-0 right-0 sm:relative sm:top-auto sm:right-auto p-2 rounded-lg bg-gray-100 dark:bg-gray-900 hover:bg-gray-200 dark:hover:bg-gray-800 transition-colors border border-gray-200 dark:border-gray-800 flex-shrink-0"
+                aria-label="Start over / Return to home"
+                title="Start over"
+              >
+                <svg className="w-5 h-5 sm:w-6 sm:h-6 text-gray-700 dark:text-gray-300" fill="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                  <path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/>
+                </svg>
+              </button>
+            )}
           </div>
-          {(references.length > 0 || result) && (
-            <button
-              onClick={resetToHome}
-              className="self-start sm:self-auto p-2 rounded-lg bg-gray-100 dark:bg-gray-900 hover:bg-gray-200 dark:hover:bg-gray-800 transition-colors border border-gray-200 dark:border-gray-800 flex-shrink-0"
-              aria-label="Start over / Return to home"
-              title="Start over"
-            >
-              <svg className="w-6 h-6 text-gray-700 dark:text-gray-300" fill="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                <path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/>
-              </svg>
-            </button>
-          )}
         </div>
 
         <form onSubmit={handleSubmit} className="mb-8">
@@ -772,22 +774,22 @@ export default function Home({ initialUrl }: HomeProps = {}) {
                   </button>
                 )}
               </div>
-              <div className="grid grid-cols-3 gap-4 mb-6">
-                <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-4 border border-gray-200 dark:border-gray-800">
-                  <div className="text-sm text-gray-600 dark:text-gray-400 mb-1">Total References</div>
-                  <div className="text-2xl font-bold text-gray-900 dark:text-white">
+              <div className="grid grid-cols-3 gap-2 sm:gap-4 mb-6">
+                <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-3 sm:p-4 border border-gray-200 dark:border-gray-800">
+                  <div className="text-xs sm:text-sm text-gray-600 dark:text-gray-400 mb-1">Total References</div>
+                  <div className="text-xl sm:text-2xl font-bold text-gray-900 dark:text-white">
                     {result.totalReferences}
                   </div>
                 </div>
-                <div className="bg-green-50 dark:bg-green-950/30 rounded-lg p-4 border border-green-200 dark:border-green-900">
-                  <div className="text-sm text-gray-600 dark:text-gray-400 mb-1">Downloaded</div>
-                  <div className="text-2xl font-bold text-green-600 dark:text-green-400">
+                <div className="bg-green-50 dark:bg-green-950/30 rounded-lg p-3 sm:p-4 border border-green-200 dark:border-green-900">
+                  <div className="text-xs sm:text-sm text-gray-600 dark:text-gray-400 mb-1">Downloaded</div>
+                  <div className="text-xl sm:text-2xl font-bold text-green-600 dark:text-green-400">
                     {result.successCount}
                   </div>
                 </div>
-                <div className="bg-red-50 dark:bg-red-950/30 rounded-lg p-4 border border-red-200 dark:border-red-900">
-                  <div className="text-sm text-gray-600 dark:text-gray-400 mb-1">Failed</div>
-                  <div className="text-2xl font-bold text-red-600 dark:text-red-400">
+                <div className="bg-red-50 dark:bg-red-950/30 rounded-lg p-3 sm:p-4 border border-red-200 dark:border-red-900">
+                  <div className="text-xs sm:text-sm text-gray-600 dark:text-gray-400 mb-1">Failed</div>
+                  <div className="text-xl sm:text-2xl font-bold text-red-600 dark:text-red-400">
                     {result.failedCount}
                   </div>
                 </div>
