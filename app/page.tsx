@@ -768,8 +768,11 @@ export default function Home({ initialUrl }: HomeProps = {}) {
     }
 
     try {
-      // Create blob from buffer
-      const blob = new Blob([pdfBuffer], { type: 'application/pdf' });
+      // Create blob from buffer - create a new ArrayBuffer copy for type compatibility
+      const arrayBuffer = new ArrayBuffer(pdfBuffer.length);
+      const newUint8Array = new Uint8Array(arrayBuffer);
+      newUint8Array.set(pdfBuffer);
+      const blob = new Blob([arrayBuffer], { type: 'application/pdf' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
