@@ -65,12 +65,20 @@ export default function Home({ initialUrl }: HomeProps = {}) {
 
   // Calculate estimated time remaining
   useEffect(() => {
-    if (startTime && references.length > 0 && processedCount < references.length) {
+    if (startTime && references.length > 0 && processedCount > 0 && processedCount < references.length) {
       const elapsed = (Date.now() - startTime) / 1000; // seconds
       const avgTimePerRef = elapsed / processedCount;
       const remaining = references.length - processedCount;
       const estimated = Math.ceil(avgTimePerRef * remaining);
-      setEstimatedTimeRemaining(estimated);
+      // Only set if it's a valid number (not Infinity or NaN)
+      if (isFinite(estimated) && estimated > 0) {
+        setEstimatedTimeRemaining(estimated);
+      } else {
+        setEstimatedTimeRemaining(null);
+      }
+    } else if (processedCount === 0) {
+      // Reset to null when no items processed yet
+      setEstimatedTimeRemaining(null);
     }
   }, [processedCount, references.length, startTime]);
 
@@ -659,11 +667,15 @@ export default function Home({ initialUrl }: HomeProps = {}) {
                 <h2 className="text-xl font-semibold text-gray-900 dark:text-white">
                   {articleTitle || 'Processing...'}
                 </h2>
-                {estimatedTimeRemaining !== null && (
+                {estimatedTimeRemaining !== null && isFinite(estimatedTimeRemaining) ? (
                   <span className="text-sm text-gray-600 dark:text-gray-400">
                     ~{formatTime(estimatedTimeRemaining)} remaining
                   </span>
-                )}
+                ) : processedCount === 0 ? (
+                  <span className="text-sm text-gray-600 dark:text-gray-400">
+                    Analyzing...
+                  </span>
+                ) : null}
               </div>
               <div className="w-full bg-gray-200 dark:bg-gray-800 rounded-full h-3 overflow-hidden">
                 <div
