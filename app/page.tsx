@@ -240,9 +240,10 @@ export default function Home({ initialUrl }: HomeProps = {}) {
         sourceUrl: ref.sourceUrl,
       }));
 
-      // Add timeout for ZIP creation (10 minutes to allow for re-processing)
+      // Add timeout for ZIP creation (5 minutes - Vercel limit is 300s, but we need buffer)
+      // Processing happens in parallel batches, so should be faster
       const zipController = new AbortController();
-      const zipTimeout = setTimeout(() => zipController.abort(), 600000); // 10 minutes
+      const zipTimeout = setTimeout(() => zipController.abort(), 300000); // 5 minutes
 
       let response: Response;
       try {
@@ -258,7 +259,7 @@ export default function Home({ initialUrl }: HomeProps = {}) {
       } catch (fetchError) {
         clearTimeout(zipTimeout);
         if (fetchError instanceof Error && fetchError.name === 'AbortError') {
-          throw new Error('ZIP creation timeout: Request took longer than 10 minutes');
+          throw new Error('ZIP creation timeout: Request took longer than 5 minutes. Try again or contact support if the issue persists.');
         }
         throw new Error(`Network error: ${fetchError instanceof Error ? fetchError.message : 'Failed to connect'}`);
       }
@@ -649,13 +650,6 @@ export default function Home({ initialUrl }: HomeProps = {}) {
               />
             </div>
             <div className="max-w-2xl mx-auto space-y-4">
-              <h2 className="text-3xl sm:text-4xl font-bold text-gray-900 dark:text-white">
-                Extract & Download All Wikipedia References
-              </h2>
-              <p className="text-lg text-gray-600 dark:text-gray-400">
-                Convert any Wikipedia article's external references into downloadable PDFs instantly. 
-                Perfect for researchers, students, and knowledge workers who need offline access to citation sources.
-              </p>
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mt-8">
                 <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-4 border border-gray-200 dark:border-gray-800">
                   <div className="text-2xl mb-2">⚡</div>
