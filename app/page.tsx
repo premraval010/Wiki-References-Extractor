@@ -145,9 +145,9 @@ export default function Home({ initialUrl }: HomeProps = {}) {
     );
 
     try {
-      // Add timeout to fetch request (4 minutes per reference to handle slow sites)
+      // Add timeout to fetch request (6 minutes per reference to handle slow sites)
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 240000); // 4 minutes
+      const timeoutId = setTimeout(() => controller.abort(), 360000); // 6 minutes
 
       let response: Response;
       try {
@@ -163,7 +163,7 @@ export default function Home({ initialUrl }: HomeProps = {}) {
       } catch (fetchError) {
         clearTimeout(timeoutId);
         if (fetchError instanceof Error && fetchError.name === 'AbortError') {
-          throw new Error('Request timeout: Processing took too long (4 minutes)');
+          throw new Error('Request timeout: Processing took too long (6 minutes)');
         }
         throw fetchError;
       }
@@ -850,8 +850,8 @@ export default function Home({ initialUrl }: HomeProps = {}) {
                         <td className="px-6 py-4 text-sm max-w-xs">
                           <a
                             href={ref.sourceUrl}
-                            target="_blank"
-                            rel="noopener noreferrer"
+            target="_blank"
+            rel="noopener noreferrer"
                             className="text-blue-600 dark:text-blue-400 hover:underline break-all"
                             title={ref.sourceUrl}
                           >
