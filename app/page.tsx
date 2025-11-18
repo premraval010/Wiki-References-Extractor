@@ -607,7 +607,7 @@ export default function Home({ initialUrl }: HomeProps = {}) {
                     className="w-8 h-8 sm:w-10 sm:h-10"
                   />
                 </a>
-                <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 dark:text-white">
+                <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 dark:text-white" style={{ fontFamily: "'Linux Libertine', 'Georgia', 'Times', 'Source Serif 4', serif" }}>
                   Wikipedia Reference Downloader
           </h1>
               </div>
