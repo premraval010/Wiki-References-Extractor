@@ -84,6 +84,10 @@ export async function renderUrlToPdf(url: string): Promise<Buffer> {
           '--disable-gpu',
           '--disable-http2', // Disable HTTP/2 to avoid protocol errors
           '--disable-features=IsolateOrigins,site-per-process',
+          '--disable-blink-features=AutomationControlled', // Avoid detection as bot
+          '--disable-web-security', // Disable web security to allow cross-origin requests
+          '--disable-features=BlockInsecurePrivateNetworkRequests', // Allow insecure requests
+          '--disable-features=NetworkService', // Disable network service that might block requests
           ...(isVercel && chromium ? chromium.args : []),
         ],
       };
@@ -99,9 +103,25 @@ export async function renderUrlToPdf(url: string): Promise<Buffer> {
       // Set viewport for consistent rendering
       await page.setViewport({ width: 1200, height: 800 });
       
+      // Set user agent to avoid being blocked
+      await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
+      
+      // Intercept and allow all requests to prevent blocking
+      await page.setRequestInterception(true);
+      page.on('request', (request: any) => {
+        // Allow all requests, don't block anything
+        request.continue();
+      });
+      
       // Handle page errors and navigation issues
       page.on('error', (err: Error) => {
         console.warn('Page error (non-fatal):', err.message);
+      });
+      
+      // Handle request failures
+      page.on('requestfailed', (request: any) => {
+        // Log but don't fail - some requests may fail but page might still load
+        console.warn('Request failed:', request.url(), request.failure()?.errorText);
       });
 
       // Navigate to the URL with increased timeout for slow-loading pages
