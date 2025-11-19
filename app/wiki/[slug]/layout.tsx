@@ -9,7 +9,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const resolvedParams = params instanceof Promise ? await params : params;
   const { slug } = resolvedParams;
   const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || 'https://wiki-reference-downloader.vercel.app';
-  const ogImageUrl = `${baseUrl}/wiki-reference-downloader.jpg`;
+  const ogImageUrl = `${baseUrl}/wiki-ref-downloader-cover.jpg`;
 
   try {
     // Decode the slug
@@ -56,10 +56,10 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
         images: [
           {
             url: ogImageUrl,
-            width: 1536,
-            height: 1024,
-            type: 'image/png',
-            alt: `Wikipedia Reference Downloader - ${articleTitle}`,
+            width: 1500,
+            height: 600,
+            type: 'image/jpeg',
+            alt: `Wikipedia References Downloader - ${articleTitle}`,
           },
         ],
       },

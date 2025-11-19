@@ -2,7 +2,7 @@
 
 ## Overview
 
-Your Wikipedia Reference Downloader now tracks all search queries! Every time someone searches for a Wikipedia article, the following data is captured:
+Your Wikipedia References Downloader now tracks all search queries! Every time someone searches for a Wikipedia article, the following data is captured:
 
 - **Wikipedia URL** - The full URL searched
 - **Article Title** - The title of the Wikipedia article

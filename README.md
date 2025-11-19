@@ -1,4 +1,4 @@
-# Wikipedia Reference Downloader
+# Wikipedia References Downloader
 
 Instantly turn any Wikipedia article's references into a neatly packaged ZIP of PDFs.
 

@@ -6,8 +6,8 @@ WhatsApp wasn't showing the SEO image when sharing links.
 ## Solution Applied
 
 1. **Changed image URLs to absolute URLs**
-   - Before: `/wiki-reference-downloader.jpg` (relative)
-   - After: `https://wiki-ref-downloader.vercel.app/wiki-reference-downloader.jpg` (absolute)
+   - Before: `/wiki-reference-downloader.png` (relative)
+   - After: `https://wiki-ref-downloader.vercel.app/wiki-reference-downloader.png` (absolute)
 
 2. **Added image type metadata**
    - Added `type: "image/png"` to Open Graph image configuration
@@ -31,7 +31,7 @@ WhatsApp has specific requirements for Open Graph images:
 After deploying:
 
 1. **Test the image URL directly**:
-   - Visit: `https://your-domain.vercel.app/wiki-reference-downloader.jpg`
+   - Visit: `https://your-domain.vercel.app/wiki-reference-downloader.png`
    - Should load the image successfully
 
 2. **Test Open Graph tags**:
@@ -54,7 +54,7 @@ Make sure `NEXT_PUBLIC_BASE_URL` is set in Vercel:
 
 Check the page source after deployment:
 ```html
-<meta property="og:image" content="https://your-domain.vercel.app/wiki-reference-downloader.jpg" />
+<meta property="og:image" content="https://your-domain.vercel.app/wiki-reference-downloader.png" />
 ```
 
 The URL should be absolute, not relative.

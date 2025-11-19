@@ -12,14 +12,14 @@ const openSans = Open_Sans({
 });
 
 const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || 'https://wiki-reference-downloader.vercel.app';
-const ogImageUrl = `${baseUrl}/wiki-reference-downloader.jpg`;
+const ogImageUrl = `${baseUrl}/wiki-ref-downloader-cover.jpg`;
 
 export const metadata: Metadata = {
   metadataBase: new URL(baseUrl),
   title: "Download All Wikipedia References as PDFs – Free Wiki Reference Downloader",
   description: "Convert any Wikipedia article's references into downloadable PDFs instantly. Paste a Wikipedia link and get all citations bundled into a clean ZIP file. Fast, simple, accurate, and built for researchers, students, and knowledge workers.",
   keywords: [
-    "Wikipedia reference downloader",
+    "Wikipedia References Downloader",
     "Download Wikipedia citations",
     "Wikipedia references to PDF",
     "Wiki citation extractor",
@@ -29,29 +29,29 @@ export const metadata: Metadata = {
     "Bulk cite downloader",
     "Academic citation tools",
   ],
-  authors: [{ name: "Wikipedia Reference Downloader" }],
-  creator: "Wikipedia Reference Downloader",
-  publisher: "Wikipedia Reference Downloader",
+  authors: [{ name: "Prem Raval" }],
+  creator: "Prem Raval",
+  publisher: "Prem Raval",
   openGraph: {
-    title: "Wiki Reference Downloader – Export All Citations as PDF in One Click",
+    title: "Wiki References Downloader | Export All Citations as PDF in One Click",
     description: "Turn any Wikipedia page into a ready-to-download ZIP of all its reference sources in PDF format. Perfect for research, reporting, citations, and academic work.",
     url: baseUrl,
-    siteName: "Wiki Reference Downloader",
+    siteName: "Wiki References Downloader",
     locale: "en_US",
     type: "website",
     images: [
       {
         url: ogImageUrl,
-        width: 1536,
-        height: 1024,
-        type: "image/png",
-        alt: "Wikipedia Reference Downloader - Extract and download all Wikipedia article references as PDFs",
+        width: 1500,
+        height: 600,
+        type: "image/jpeg",
+        alt: "Wikipedia References Downloader | Extract & download all Wikipedia article references as PDFs",
       },
     ],
   },
   twitter: {
     card: "summary_large_image",
-    title: "Wiki Reference Downloader – Export All Citations as PDF in One Click",
+    title: "Wiki References Downloader | Export All Citations as PDFs in One Click",
     description: "Paste a Wikipedia link → Get all references as PDFs. Done.",
     images: [ogImageUrl],
   },

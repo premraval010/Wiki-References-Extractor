@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
+import Image from 'next/image';
 import { track } from '@vercel/analytics';
 import type { ProcessArticleResponse } from '@/app/api/process-article/route';
 import type { ExtractReferencesResponse } from '@/app/api/process-article/route';
@@ -860,7 +861,7 @@ export default function Home({ initialUrl }: HomeProps = {}) {
               />
             </a>
             <h1 className="flex-1 text-xl font-bold text-gray-900 dark:text-white text-left ml-4" style={{ fontFamily: "'Linux Libertine', 'Georgia', 'Times', 'Source Serif 4', serif" }}>
-              Wikipedia Reference Downloader
+              Wikipedia References Downloader
             </h1>
             {(references.length > 0 || result) && (
               <button
@@ -895,7 +896,7 @@ export default function Home({ initialUrl }: HomeProps = {}) {
                 />
               </a>
               <h1 className="text-3xl font-bold text-gray-900 dark:text-white" style={{ fontFamily: "'Linux Libertine', 'Georgia', 'Times', 'Source Serif 4', serif" }}>
-                Wikipedia Reference Downloader
+                Wikipedia References Downloader
               </h1>
             </div>
             <p className="text-base text-gray-600 dark:text-gray-400">
@@ -954,9 +955,12 @@ export default function Home({ initialUrl }: HomeProps = {}) {
         {!loading && references.length === 0 && !result && (
           <div className="mb-12 text-center">
             <div className="mb-8">
-              <img 
-                src="/wiki-reference-downloader.jpg" 
-                alt="Wikipedia Reference Downloader" 
+              <Image 
+                src="/wiki-ref-downloader-cover.jpg" 
+                alt="Wikipedia References Downloader" 
+                width={1500}
+                height={600}
+                priority
                 className="w-full max-w-2xl mx-auto rounded-xl shadow-lg dark:shadow-none border border-gray-200 dark:border-gray-800"
               />
             </div>
