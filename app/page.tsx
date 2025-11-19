@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
+import { track } from '@vercel/analytics';
 import type { ProcessArticleResponse } from '@/app/api/process-article/route';
 import type { ExtractReferencesResponse } from '@/app/api/process-article/route';
 import type { ProcessReferenceResponse } from '@/app/api/process-reference/route';
@@ -462,8 +463,40 @@ export default function Home({ initialUrl }: HomeProps = {}) {
         setArticleMetadata(metadataWithRefs as ArticleMetadata & { referencesCount?: number });
       }
 
-      // Generate shareable URL
+      // Generate shareable URL and extract slug for analytics
       const slugData = extractWikipediaSlug(wikiUrl);
+      
+      // Log search query for analytics (fire and forget - don't block on this)
+      try {
+        const articleSlug = slugData ? slugData.slug : '';
+
+        // Track with Vercel Analytics (client-side)
+        track('wiki_search', {
+          url: wikiUrl,
+          slug: articleSlug,
+          title: extractData.articleTitle,
+          referenceCount: extractData.references.length,
+        });
+
+        // Also log to server (for Vercel logs and potential database storage)
+        fetch('/api/log-search', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            wikiUrl,
+            articleTitle: extractData.articleTitle,
+            referenceCount: extractData.references.length,
+          }),
+        }).catch(() => {
+          // Silently fail - analytics shouldn't block the user experience
+        });
+      } catch (err) {
+        // Silently fail - analytics shouldn't block the user experience
+      }
+
+      // Generate shareable URL
       if (slugData) {
         const slug = encodeURIComponent(`${slugData.lang}:${slugData.slug}`);
         const baseUrl = typeof window !== 'undefined' ? window.location.origin : '';
@@ -922,7 +955,7 @@ export default function Home({ initialUrl }: HomeProps = {}) {
           <div className="mb-12 text-center">
             <div className="mb-8">
               <img 
-                src="/wiki-reference-downloader.png" 
+                src="/wiki-reference-downloader.jpg" 
                 alt="Wikipedia Reference Downloader" 
                 className="w-full max-w-2xl mx-auto rounded-xl shadow-lg dark:shadow-none border border-gray-200 dark:border-gray-800"
               />
