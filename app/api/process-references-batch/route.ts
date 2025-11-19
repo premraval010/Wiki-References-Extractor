@@ -51,12 +51,20 @@ async function processSingleReference(
       pdfBase64: pdfBuffer.toString('base64'),
     };
   } catch (error) {
+    let errorMessage = error instanceof Error ? error.message : 'Unknown error';
+
+    if (errorMessage.includes('[CAPTCHA_BLOCKED]')) {
+      errorMessage = errorMessage.replace('[CAPTCHA_BLOCKED]', '').trim();
+    } else if (errorMessage.includes('ERR_BLOCKED_BY_CLIENT') || errorMessage.includes('err_blocked_by_client')) {
+      errorMessage = 'Page resources were blocked (likely ads/trackers). The page may require JavaScript or have strict security policies that prevent automated access.';
+    }
+
     return {
       id: ref.id,
       title: ref.title,
       sourceUrl: ref.sourceUrl,
       status: 'failed',
-      error: error instanceof Error ? error.message : 'Unknown error',
+      error: errorMessage,
     };
   }
 }

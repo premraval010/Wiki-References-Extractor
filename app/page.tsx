@@ -834,7 +834,9 @@ export default function Home({ initialUrl }: HomeProps = {}) {
     return secs > 0 ? `${mins}m ${secs}s` : `${mins}m`;
   };
 
-  const progress = references.length > 0 ? (processedCount / references.length) * 100 : 0;
+  const totalReferencesCount = references.length;
+  const processedSafe = totalReferencesCount > 0 ? Math.min(processedCount, totalReferencesCount) : processedCount;
+  const progress = totalReferencesCount > 0 ? (processedSafe / totalReferencesCount) * 100 : 0;
   const successCount = references.filter((r) => r.status === 'downloaded').length;
   const failedCount = references.filter((r) => r.status === 'failed').length;
   const processingCount = references.filter((r) => r.status === 'processing').length;
@@ -1161,6 +1163,10 @@ export default function Home({ initialUrl }: HomeProps = {}) {
                 </div>
               )}
 
+              <div className="mb-4 p-3 rounded-lg bg-yellow-50 dark:bg-yellow-900/30 border border-yellow-200 dark:border-yellow-800 text-sm text-yellow-900 dark:text-yellow-200">
+                Please Note: Your ZIP download will be available once all references finish processing. This may take a few minutes depending on the total number of references.
+              </div>
+
               <div className="w-full bg-gray-200 dark:bg-gray-800 rounded-full h-3 overflow-hidden">
                 <div
                   className="bg-blue-600 dark:bg-blue-500 h-full rounded-full transition-all duration-300 ease-out"
@@ -1169,7 +1175,7 @@ export default function Home({ initialUrl }: HomeProps = {}) {
               </div>
               <div className="flex items-center justify-between mt-2 text-sm text-gray-600 dark:text-gray-400">
                 <span>
-                  {processedCount} / {references.length} processed
+                  {processedSafe} / {references.length} processed
                 </span>
                 <span>{Math.round(progress)}%</span>
               </div>
@@ -1186,9 +1192,15 @@ export default function Home({ initialUrl }: HomeProps = {}) {
                       <span className="text-sm font-medium text-gray-500 dark:text-gray-400">
                         #{ref.id}
                       </span>
-                      <span className="text-sm text-gray-900 dark:text-white truncate">
+                      <a
+                        href={ref.sourceUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-sm text-gray-900 dark:text-white truncate hover:underline"
+                        title={ref.sourceUrl}
+                      >
                         {ref.title}
-                      </span>
+                      </a>
                     </div>
                   </div>
                   <div className="ml-4">
@@ -1241,7 +1253,7 @@ export default function Home({ initialUrl }: HomeProps = {}) {
                           )}
                         </button>
                         {expandedErrors.has(ref.id) && ref.error && (
-                          <div className="absolute right-0 top-full mt-2 w-64 p-3 bg-red-50 dark:bg-red-950/50 border border-red-200 dark:border-red-900 rounded-lg shadow-lg z-10">
+                          <div className="absolute right-0 top-full mt-2 w-64 p-3 bg-red-50 dark:bg-red-950/50 border border-red-200 dark:border-red-900 rounded-lg shadow-lg z-10 whitespace-normal break-words">
                             <div className="text-xs font-semibold text-red-800 dark:text-red-300 mb-1">Error:</div>
                             <div className="text-xs text-red-700 dark:text-red-400 break-words">{ref.error}</div>
                           </div>
@@ -1313,6 +1325,12 @@ export default function Home({ initialUrl }: HomeProps = {}) {
                   Download ZIP ({result.successCount} files)
                 </button>
               )}
+
+              {result.failedCount > 0 && (
+                <div className="mt-4 p-3 rounded-lg bg-blue-50 dark:bg-blue-900/30 border border-blue-200 dark:border-blue-800 text-sm text-blue-900 dark:text-blue-200">
+                  Feel free to directly browse any citations via URL, that may have failed due to issues such as timeouts, captcha protection, or paywalls.
+                </div>
+              )}
             </div>
 
             <div className="bg-white dark:bg-black rounded-xl shadow-lg dark:shadow-none overflow-hidden border border-gray-200 dark:border-gray-800 transition-colors">
@@ -1355,7 +1373,15 @@ export default function Home({ initialUrl }: HomeProps = {}) {
                           {ref.id}
                         </td>
                         <td className="px-6 py-4 text-sm text-gray-900 dark:text-white max-w-md">
-                          <div className="break-words">{ref.title}</div>
+                          <a
+                            href={ref.sourceUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="break-words hover:underline"
+                            title={ref.sourceUrl}
+                          >
+                            {ref.title}
+                          </a>
                         </td>
                         <td className="px-6 py-4 text-sm max-w-xs">
                           <a

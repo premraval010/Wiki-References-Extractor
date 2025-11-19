@@ -57,7 +57,9 @@ export async function POST(request: NextRequest) {
       let errorMessage = error instanceof Error ? error.message : 'Unknown error';
       
       // Make ERR_BLOCKED_BY_CLIENT errors more user-friendly
-      if (errorMessage.includes('ERR_BLOCKED_BY_CLIENT') || errorMessage.includes('err_blocked_by_client')) {
+      if (errorMessage.includes('[CAPTCHA_BLOCKED]')) {
+        errorMessage = errorMessage.replace('[CAPTCHA_BLOCKED]', '').trim();
+      } else if (errorMessage.includes('ERR_BLOCKED_BY_CLIENT') || errorMessage.includes('err_blocked_by_client')) {
         errorMessage = 'Page resources were blocked (likely ads/trackers). The page may require JavaScript or have strict security policies that prevent automated access.';
       } else if (errorMessage.includes('blocked requests')) {
         // Already formatted by PDF library

@@ -11,6 +11,47 @@ if (process.env.VERCEL === '1') {
   puppeteer = require('puppeteer');
 }
 
+const BLOCK_PAGE_PATTERNS = [
+  { regex: /please confirm you are human/i, reason: 'Publisher requires human verification (CAPTCHA).' },
+  { regex: /slide right to complete the puzzle/i, reason: 'Publisher requires human verification (slider CAPTCHA).' },
+  { regex: /complete the security check/i, reason: 'Publisher requires a security verification (CAPTCHA).' },
+  { regex: /press and hold/i, reason: 'Publisher requires human verification (press-and-hold challenge).' },
+  { regex: /verify you (are|re) (a )?(human|robot)/i, reason: 'Publisher requires human verification (CAPTCHA).' },
+  { regex: /before we can let you continue/i, reason: 'Publisher is gating the content with a verification step.' },
+  { regex: /unusual traffic/i, reason: 'Publisher detected unusual traffic and blocked automated access.' },
+  { regex: /access denied/i, reason: 'Publisher denied access (likely due to automated detection).' },
+  { regex: /article not found/i, reason: 'Publisher reports this article is not available or was removed.' },
+  { regex: /page not found/i, reason: 'Publisher reports this page was not found (404).' },
+  { regex: /not found on this website/i, reason: 'Publisher reports this page was not found on the site.' },
+  { regex: /cf-captcha|cf-chl/i, reason: 'Cloudflare CAPTCHA challenge detected.' },
+  { regex: /bot detection/i, reason: 'Publisher triggered bot detection and blocked access.' },
+];
+
+function detectAccessBlocker(html: string, pageUrl: string): string | null {
+  const lowerHtml = html.toLowerCase();
+  const lowerUrl = pageUrl.toLowerCase();
+
+  if (lowerUrl.includes('captcha') || lowerUrl.includes('verify') || lowerUrl.includes('blocked')) {
+    return 'Publisher redirected to a verification / CAPTCHA page.';
+  }
+
+  for (const indicator of BLOCK_PAGE_PATTERNS) {
+    if (indicator.regex.test(lowerHtml)) {
+      return indicator.reason;
+    }
+  }
+
+  if (
+    lowerHtml.includes('g-recaptcha') ||
+    lowerHtml.includes('hcaptcha') ||
+    lowerHtml.includes('cf-turnstile')
+  ) {
+    return 'Publisher is showing a CAPTCHA widget.';
+  }
+
+  return null;
+}
+
 /**
  * Checks if a URL points to a PDF file
  */
@@ -207,6 +248,13 @@ export async function renderUrlToPdf(url: string): Promise<Buffer> {
       // Check if page is still valid (not destroyed)
       if (page.isClosed()) {
         throw new Error('Page was closed during navigation');
+      }
+
+      const pageUrlAfterLoad = page.url();
+      const pageContent = await page.content();
+      const blockerReason = detectAccessBlocker(pageContent, pageUrlAfterLoad);
+      if (blockerReason) {
+        throw new Error(`[CAPTCHA_BLOCKED] ${blockerReason}`);
       }
 
       // Generate PDF with error handling
