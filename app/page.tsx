@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import Image from 'next/image';
+import JSZip from 'jszip';
 import { track } from '@vercel/analytics';
 import type { ProcessArticleResponse } from '@/app/api/process-article/route';
 import type { ExtractReferencesResponse } from '@/app/api/process-article/route';
@@ -343,9 +344,14 @@ export default function Home({ initialUrl }: HomeProps = {}) {
     }
   };
 
-  const createZipFromBuffers = async (refs: ReferenceStatus[]) => {
-    // Get only successfully downloaded references
-    const downloadedRefs = refs.filter((r) => r.status === 'downloaded' && r.sourceUrl);
+  const createZipFromBuffers = async (refs: ReferenceStatus[]): Promise<string | null> => {
+    // Get only successfully downloaded references that have buffers in memory
+    const downloadedRefs = refs.filter(
+      (r) => r.status === 'downloaded' && 
+      r.sourceUrl && 
+      pdfBuffersRef.current.has(r.id) &&
+      r.pdfFilename
+    );
 
     if (downloadedRefs.length === 0) return null;
 
@@ -355,51 +361,40 @@ export default function Home({ initialUrl }: HomeProps = {}) {
     }
 
     try {
-      // Send only reference metadata (small payload) - server will re-process them
-      const referencesPayload = downloadedRefs.map((ref) => ({
-        id: ref.id,
-        title: ref.title,
-        sourceUrl: ref.sourceUrl,
-      }));
+      // Create ZIP client-side using existing buffers (much faster!)
+      const zip = new JSZip();
+      let addedCount = 0;
 
-      // Add timeout for ZIP creation (4 minutes - stays under Vercel's 300s limit with buffer)
-      // Processing happens in parallel batches, so should be faster
-      const zipController = new AbortController();
-      const zipTimeout = setTimeout(() => zipController.abort(), 240000); // 4 minutes
-
-      let response: Response;
-      try {
-        response = await fetch('/api/create-zip', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({ references: referencesPayload }),
-          signal: zipController.signal,
-        });
-        clearTimeout(zipTimeout);
-      } catch (fetchError) {
-        clearTimeout(zipTimeout);
-        if (fetchError instanceof Error && fetchError.name === 'AbortError') {
-          throw new Error('ZIP creation timeout: Request took longer than 5 minutes. Try again or contact support if the issue persists.');
+      // Add all PDF files to ZIP
+      for (const ref of downloadedRefs) {
+        const pdfBuffer = pdfBuffersRef.current.get(ref.id);
+        if (pdfBuffer && ref.pdfFilename) {
+          zip.file(ref.pdfFilename, pdfBuffer);
+          addedCount++;
         }
-        throw new Error(`Network error: ${fetchError instanceof Error ? fetchError.message : 'Failed to connect'}`);
       }
 
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({ 
-          error: `HTTP ${response.status}: ${response.statusText}` 
-        }));
-        throw new Error(errorData.error || `Server error: ${response.status}`);
+      if (addedCount === 0) {
+        throw new Error('No valid PDF files found to add to ZIP');
       }
 
-      const data = await response.json();
-      
-      if (!data.zipBase64) {
-        throw new Error('No ZIP data returned from server');
-      }
+      // Generate ZIP file as base64
+      const zipBlob = await zip.generateAsync({
+        type: 'blob',
+        compression: 'DEFLATE',
+        compressionOptions: { level: 6 }, // Balanced compression
+      });
 
-      return data.zipBase64;
+      // Convert blob to base64
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => {
+          const base64 = (reader.result as string).split(',')[1]; // Remove data:application/zip;base64, prefix
+          resolve(base64);
+        };
+        reader.onerror = () => reject(new Error('Failed to convert ZIP to base64'));
+        reader.readAsDataURL(zipBlob);
+      });
     } catch (err) {
       console.error('Failed to create ZIP:', err);
       throw err; // Re-throw to let caller handle it
@@ -602,7 +597,7 @@ export default function Home({ initialUrl }: HomeProps = {}) {
       }
 
       // Wait a bit for state to update
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      await new Promise((resolve) => setTimeout(resolve, 200));
 
       // Step 3: Get final references state
       let finalRefs: ReferenceStatus[] = [];
@@ -614,16 +609,7 @@ export default function Home({ initialUrl }: HomeProps = {}) {
         });
       });
 
-      // Step 4: Create ZIP (optional, don't fail if this fails)
-      let zipBase64: string | null = null;
-      try {
-        zipBase64 = await createZipFromBuffers(finalRefs);
-      } catch (zipError) {
-        console.error('ZIP creation failed, but continuing with results:', zipError);
-        // Continue without ZIP - user can create it later via the button
-      }
-
-      // Step 5: Set final result (always show results, even if some failed)
+      // Step 4: Calculate counts and set result IMMEDIATELY (don't wait for ZIP)
       const successCount = finalRefs.filter((r) => r.status === 'downloaded').length;
       const failedCount = finalRefs.filter((r) => r.status === 'failed').length;
       const pendingCount = finalRefs.filter((r) => r.status === 'pending').length;
@@ -633,12 +619,18 @@ export default function Home({ initialUrl }: HomeProps = {}) {
         setError(`Warning: ${pendingCount} reference(s) were not processed. Processing may have been interrupted.`);
       }
 
+      // Clear loading state and time estimates immediately
+      setLoading(false);
+      setStartTime(null);
+      setEstimatedTimeRemaining(null);
+
+      // Set result immediately so user can see results
       setResult({
         articleTitle: extractData.articleTitle,
         totalReferences: extractData.references.length,
         successCount,
         failedCount,
-        zipBase64: zipBase64 || undefined,
+        zipBase64: undefined, // Will be set later if ZIP creation succeeds
         references: finalRefs.map((r) => ({
           id: r.id,
           title: r.title,
@@ -648,6 +640,23 @@ export default function Home({ initialUrl }: HomeProps = {}) {
           error: r.error || (r.status === 'pending' ? 'Processing was interrupted' : undefined),
         })),
       });
+
+      // Step 5: Try to create ZIP in background (non-blocking, client-side)
+      // Use the PDF buffers we already have in memory - much faster!
+      if (successCount > 0) {
+        // Create ZIP client-side from existing buffers (no server call needed)
+        createZipFromBuffers(finalRefs)
+          .then((zipBase64) => {
+            if (zipBase64) {
+              // Update result with ZIP
+              setResult((prev) => prev ? { ...prev, zipBase64 } : prev);
+            }
+          })
+          .catch((zipError) => {
+            console.error('Background ZIP creation failed (non-blocking):', zipError);
+            // Don't show error - user can create ZIP manually via button
+          });
+      }
     } catch (err) {
       console.error('Error in handleSubmit:', err);
       
@@ -711,7 +720,7 @@ export default function Home({ initialUrl }: HomeProps = {}) {
       const downloadedRefs = references.filter((r) => r.status === 'downloaded' && pdfBuffersRef.current.has(r.id));
       
       if (downloadedRefs.length === 0) {
-        setError('No downloaded files available');
+        setError('No downloaded files available. The files may have been cleared from memory.');
         if (button) {
           button.disabled = false;
           button.textContent = `Download ZIP (${result.successCount} files)`;
@@ -719,7 +728,7 @@ export default function Home({ initialUrl }: HomeProps = {}) {
         return;
       }
 
-      // Create ZIP on-demand from current buffers
+      // Create ZIP on-demand from current buffers (client-side, fast!)
       const zipBase64 = await createZipFromBuffers(references);
       
       if (!zipBase64) {
