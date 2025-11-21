@@ -298,180 +298,124 @@ export async function fetchArticleHtml(url: string): Promise<string> {
 export function extractReferences(html: string): Reference[] {
   const $ = cheerio.load(html);
   const references: Reference[] = [];
-  const seenUrls = new Set<string>(); // Track URLs to avoid duplicates
+  const seenUrls = new Set<string>();
+  const seenIds = new Set<string>();
+  const referenceElements = new Set<cheerio.Element>();
   let id = 1;
 
-  /**
-   * Helper function to extract a reference from an element
-   */
-  const extractReferenceFromElement = (
-    $element: cheerio.Cheerio,
-    sourceUrl: string
-  ): Reference | null => {
-    // Skip internal Wikipedia links
-    if (sourceUrl.includes('/wiki/') && sourceUrl.includes('wikipedia.org')) {
-      return null;
-    }
+  const selectors = [
+    'ol.references li',
+    'div.reflist li',
+    'div.references li',
+    'section.references li',
+    '.mw-references-wrap li',
+    'li.reference',
+  ];
 
-    // Skip if we've already seen this URL
-    if (seenUrls.has(sourceUrl)) {
-      return null;
-    }
-
-    // Extract title from multiple possible sources
-    let title = '';
-    
-    // Try to get title from <cite> text
-    const $cite = $element.find('cite');
-    if ($cite.length > 0) {
-      title = $cite.text().trim();
-    }
-    
-    // If no cite, try anchor text from external link
-    if (!title) {
-      const $link = $element.find(`a[href="${sourceUrl}"]`).first();
-      if ($link.length > 0) {
-        title = $link.text().trim();
-      }
-    }
-    
-    // If still no title, try the first external link's text
-    if (!title) {
-      const $link = $element.find('a[href^="http"]').first();
-      if ($link.length > 0) {
-        title = $link.text().trim();
-      }
-    }
-    
-    // If still no title, use the whole element text truncated
-    if (!title) {
-      title = $element.text().trim();
-    }
-    
-    // Clean up title: remove extra whitespace, newlines, citation markers
-    title = title.replace(/\[\d+\]/g, '').replace(/\s+/g, ' ').trim();
-    
-    // Truncate if too long (for display purposes, actual filename will be sanitized later)
-    if (title.length > 200) {
-      title = title.substring(0, 200) + '...';
-    }
-    
-    // Fallback if still no useful title
-    if (!title || title.length === 0) {
-      title = `Reference #${id}`;
-    }
-
-    seenUrls.add(sourceUrl);
-    return {
-      id: id++,
-      title,
-      sourceUrl,
-    };
-  };
-
-  // Method 1: Extract from all reference list items (main references, bibliography, notes, etc.)
-  // This covers: ol.references, div.reflist, div.references, section.references, .mw-references-wrap
-  $('ol.references li, div.reflist li, div.references li, section.references li, .mw-references-wrap li, .reference').each((_, element) => {
-    const $li = $(element);
-    
-    // Find all external links in this reference
-    $li.find('a[href^="http"]').each((_, linkEl) => {
-      const $link = $(linkEl);
-      const sourceUrl = $link.attr('href');
-      if (!sourceUrl) return;
-
-      const ref = extractReferenceFromElement($li, sourceUrl);
-      if (ref) {
-        references.push(ref);
-      }
+  selectors.forEach((selector) => {
+    $(selector).each((_, element) => {
+      referenceElements.add(element);
     });
   });
 
-  // Method 2: Extract from citation elements that link to references
-  // Follow citation links (like [1], [2]) to their target references
-  $('a[href^="#cite"], span.mw-cite-backlink a').each((_, element) => {
-    const $el = $(element);
-    const href = $el.attr('href');
-    if (!href || !href.startsWith('#cite')) return;
-    
-    // Find the referenced element by ID
-    const citeId = href.substring(1); // Remove #
-    const $refElement = $(`#${citeId.replace(/[^a-zA-Z0-9_-]/g, '\\$&')}`).closest('li, .reference');
-    
-    if ($refElement.length > 0) {
-      // Find external links in the referenced element
-      $refElement.find('a[href^="http"]').each((_, linkEl) => {
-        const $link = $(linkEl);
-        const sourceUrl = $link.attr('href');
-        if (!sourceUrl) return;
-
-        const ref = extractReferenceFromElement($refElement, sourceUrl);
-        if (ref) {
-          references.push(ref);
-        }
-      });
+  const normalizeUrl = (url: string): string => {
+    try {
+      const parsed = new URL(url);
+      parsed.hash = '';
+      parsed.hostname = parsed.hostname.toLowerCase();
+      parsed.protocol = parsed.protocol.toLowerCase();
+      // Remove common tracking params
+      const paramsToRemove = ['utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content', 'clid'];
+      paramsToRemove.forEach((param) => parsed.searchParams.delete(param));
+      parsed.searchParams.sort();
+      let pathname = parsed.pathname.replace(/\/+$/, '');
+      if (!pathname) {
+        pathname = '/';
+      }
+      const search = parsed.searchParams.toString();
+      return `${parsed.protocol}//${parsed.hostname}${pathname}${search ? `?${search}` : ''}`;
+    } catch {
+      return url;
     }
-  });
+  };
 
-  // Method 3: Extract from citation templates (cite web, cite book, etc.) in the article body
-  $('.citation').each((_, element) => {
-    const $citation = $(element);
-    
-    // Find the parent reference element
-    let $refElement = $citation.closest('li, .reference, .mw-references-wrap li');
-    
-    // If no parent reference, this might be an inline citation - find its target
-    if ($refElement.length === 0) {
-      const $citeLink = $citation.find('a[href^="#cite"]').first();
-      if ($citeLink.length > 0) {
-        const href = $citeLink.attr('href');
-        if (href) {
-          const citeId = href.substring(1);
-          $refElement = $(`#${citeId.replace(/[^a-zA-Z0-9_-]/g, '\\$&')}`).closest('li, .reference');
-        }
+  const findPrimaryExternalLink = ($element: cheerio.Cheerio): string | null => {
+    const $links = $element.find('a[href^="http"]');
+    for (let i = 0; i < $links.length; i++) {
+      const href = $links.eq(i).attr('href');
+      if (!href) continue;
+      if (href.includes('/wiki/') && href.includes('wikipedia.org')) continue;
+      return href;
+    }
+    return null;
+  };
+
+  const extractTitle = ($element: cheerio.Cheerio, sourceUrl: string): string => {
+    const $cite = $element.find('cite');
+    if ($cite.length > 0) {
+      const citeText = $cite.text().trim();
+      if (citeText) {
+        return citeText.replace(/\s+/g, ' ').replace(/\[\d+\]/g, '').trim();
       }
     }
-    
-    if ($refElement.length > 0) {
-      $refElement.find('a[href^="http"]').each((_, linkEl) => {
-        const $link = $(linkEl);
-        const sourceUrl = $link.attr('href');
-        if (!sourceUrl) return;
 
-        const ref = extractReferenceFromElement($refElement, sourceUrl);
-        if (ref) {
-          references.push(ref);
-        }
-      });
-    }
-  });
-
-  // Method 4: Extract from external link class (class="external") that aren't in reference lists
-  // These are standalone external links that might be citations
-  $('a.external[href^="http"]').each((_, element) => {
-    const $link = $(element);
-    const sourceUrl = $link.attr('href');
-    if (!sourceUrl) return;
-
-    // Skip if already seen
-    if (seenUrls.has(sourceUrl)) return;
-
-    // Skip internal Wikipedia links
-    if (sourceUrl.includes('/wiki/') && sourceUrl.includes('wikipedia.org')) return;
-
-    // Only process if this link is in a citation context or reference section
-    const $parent = $link.closest('li, .reference, .citation, .mw-references-wrap, div.reflist, div.references, section.references');
-    
-    // If it's in a reference context, process it
-    if ($parent.length > 0) {
-      const ref = extractReferenceFromElement($parent, sourceUrl);
-      if (ref) {
-        references.push(ref);
+    const $matchingLink = $element.find(`a[href="${sourceUrl}"]`).first();
+    if ($matchingLink.length > 0) {
+      const linkText = $matchingLink.text().trim();
+      if (linkText) {
+        return linkText.replace(/\s+/g, ' ').replace(/\[\d+\]/g, '').trim();
       }
     }
+
+    const firstExternalLink = $element.find('a[href^="http"]').first();
+    if (firstExternalLink.length > 0) {
+      const linkText = firstExternalLink.text().trim();
+      if (linkText) {
+        return linkText.replace(/\s+/g, ' ').replace(/\[\d+\]/g, '').trim();
+      }
+    }
+
+    const elementText = $element.text().trim();
+    if (elementText) {
+      const cleaned = elementText.replace(/\s+/g, ' ').replace(/\[\d+\]/g, '').trim();
+      if (cleaned) {
+        return cleaned.length > 200 ? `${cleaned.substring(0, 200)}...` : cleaned;
+      }
+    }
+
+    return `Reference #${id}`;
+  };
+
+  referenceElements.forEach((element) => {
+    const $element = $(element);
+    const elementId = $element.attr('id');
+    if (elementId && seenIds.has(elementId)) {
+      return;
+    }
+    if (elementId) {
+      seenIds.add(elementId);
+    }
+
+    const sourceUrl = findPrimaryExternalLink($element);
+    if (!sourceUrl) {
+      return;
+    }
+
+    const normalizedUrl = normalizeUrl(sourceUrl);
+    if (seenUrls.has(normalizedUrl)) {
+      return;
+    }
+
+    seenUrls.add(normalizedUrl);
+    const title = extractTitle($element, sourceUrl);
+
+    references.push({
+      id: id++,
+      title,
+      sourceUrl,
+    });
   });
 
-  // Sort by ID to maintain order
-  return references.sort((a, b) => a.id - b.id);
+  return references;
 }
 
