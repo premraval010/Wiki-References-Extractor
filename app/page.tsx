@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, Fragment } from 'react';
 import { useRouter } from 'next/navigation';
 import Image from 'next/image';
 import JSZip from 'jszip';
@@ -14,10 +14,12 @@ import { extractWikipediaSlug } from '@/lib/wiki';
 type ReferenceStatus = {
   id: number;
   title: string;
-  sourceUrl: string;
-  status: 'pending' | 'processing' | 'downloaded' | 'failed';
+  sourceUrl?: string;
+  status: 'pending' | 'processing' | 'downloaded' | 'failed' | 'manual';
   pdfFilename?: string;
   error?: string;
+  note?: string;
+  anchorId?: string;
 };
 
 type HomeProps = {
@@ -36,6 +38,9 @@ export default function Home({ initialUrl }: HomeProps = {}) {
   const [articleTitle, setArticleTitle] = useState<string>('');
   const [articleMetadata, setArticleMetadata] = useState<ArticleMetadata | null>(null);
   const [references, setReferences] = useState<ReferenceStatus[]>([]);
+  const [totalReferencesCount, setTotalReferencesCount] = useState(0);
+  const [downloadableReferencesCount, setDownloadableReferencesCount] = useState(0);
+  const [manualReferencesCount, setManualReferencesCount] = useState(0);
   const [processedCount, setProcessedCount] = useState(0);
   const [startTime, setStartTime] = useState<number | null>(null);
   const [estimatedTimeRemaining, setEstimatedTimeRemaining] = useState<number | null>(null);
@@ -100,6 +105,14 @@ export default function Home({ initialUrl }: HomeProps = {}) {
     });
   };
 
+  const getManualReferenceUrl = (ref: ReferenceStatus): string | null => {
+    if (!wikiUrl) return null;
+    if (ref.anchorId) {
+      return `${wikiUrl}#${ref.anchorId}`;
+    }
+    return wikiUrl;
+  };
+
   const resetToHome = () => {
     // Reset all state
     setWikiUrl('');
@@ -109,6 +122,9 @@ export default function Home({ initialUrl }: HomeProps = {}) {
     setArticleTitle('');
     setArticleMetadata(null);
     setReferences([]);
+    setTotalReferencesCount(0);
+    setDownloadableReferencesCount(0);
+    setManualReferencesCount(0);
     setProcessedCount(0);
     setStartTime(null);
     setEstimatedTimeRemaining(null);
@@ -407,6 +423,9 @@ export default function Home({ initialUrl }: HomeProps = {}) {
     setError(null);
     setResult(null);
     setReferences([]);
+    setTotalReferencesCount(0);
+    setDownloadableReferencesCount(0);
+    setManualReferencesCount(0);
     setProcessedCount(0);
     setStartTime(null);
     setEstimatedTimeRemaining(null);
@@ -450,11 +469,17 @@ export default function Home({ initialUrl }: HomeProps = {}) {
 
       const extractData: ExtractReferencesResponse = await extractResponse.json();
       setArticleTitle(extractData.articleTitle);
+      const totalRefs = extractData.totalReferences ?? extractData.references.length;
+      const downloadableRefsCount = extractData.downloadableReferences ?? extractData.references.filter((ref) => ref.sourceUrl).length;
+      const manualRefsCount = extractData.manualReferences ?? Math.max(totalRefs - downloadableRefsCount, 0);
+      setTotalReferencesCount(totalRefs);
+      setDownloadableReferencesCount(downloadableRefsCount);
+      setManualReferencesCount(manualRefsCount);
       if (extractData.metadata) {
         // Add references count to metadata for display
         const metadataWithRefs = {
           ...extractData.metadata,
-          referencesCount: extractData.references.length,
+          referencesCount: totalRefs,
         };
         setArticleMetadata(metadataWithRefs as ArticleMetadata & { referencesCount?: number });
       }
@@ -471,7 +496,7 @@ export default function Home({ initialUrl }: HomeProps = {}) {
           url: wikiUrl,
           slug: articleSlug,
           title: extractData.articleTitle,
-          referenceCount: extractData.references.length,
+          referenceCount: totalRefs,
         });
 
         // Also log to server (for Vercel logs and potential database storage)
@@ -483,7 +508,7 @@ export default function Home({ initialUrl }: HomeProps = {}) {
           body: JSON.stringify({
             wikiUrl,
             articleTitle: extractData.articleTitle,
-            referenceCount: extractData.references.length,
+            referenceCount: totalRefs,
           }),
         }).catch(() => {
           // Silently fail - analytics shouldn't block the user experience
@@ -504,10 +529,11 @@ export default function Home({ initialUrl }: HomeProps = {}) {
         }
       }
 
-      if (extractData.references.length === 0) {
+      if (totalRefs === 0) {
         setResult({
           articleTitle: extractData.articleTitle,
           totalReferences: 0,
+          downloadableReferences: 0,
           successCount: 0,
           failedCount: 0,
           references: [],
@@ -516,22 +542,67 @@ export default function Home({ initialUrl }: HomeProps = {}) {
         return;
       }
 
-      // Initialize references with pending status
-      const initialReferences: ReferenceStatus[] = extractData.references.map((ref) => ({
-        ...ref,
-        status: 'pending',
-      }));
+      // Initialize references with pending/manual status
+      const initialReferences: ReferenceStatus[] = extractData.references.map((ref) => {
+        if (ref.sourceUrl) {
+          return {
+            id: ref.id,
+            title: ref.title,
+            sourceUrl: ref.sourceUrl,
+            anchorId: ref.anchorId,
+            status: 'pending' as const,
+          };
+        }
+        return {
+          id: ref.id,
+          title: ref.title,
+           anchorId: ref.anchorId,
+          status: 'manual' as const,
+          note: 'No external link detected. Please access this citation manually.',
+        };
+      });
       setReferences(initialReferences);
+      const manualOnlyCount = initialReferences.filter((ref) => ref.status === 'manual').length;
+      setProcessedCount(manualOnlyCount);
+
+      type DownloadableRef = { id: number; title: string; sourceUrl: string; hasExternalLink: boolean };
+      const downloadableRefsForProcessing = extractData.references.filter(
+        (ref): ref is DownloadableRef => Boolean(ref.sourceUrl)
+      );
+
+      if (downloadableRefsForProcessing.length === 0) {
+        setStartTime(null);
+        setEstimatedTimeRemaining(null);
+        setResult({
+          articleTitle: extractData.articleTitle,
+          totalReferences: totalRefs,
+          downloadableReferences: 0,
+          successCount: 0,
+          failedCount: 0,
+          references: initialReferences.map((ref) => ({
+            id: ref.id,
+            title: ref.title,
+            sourceUrl: ref.sourceUrl,
+            status: ref.status === 'manual' ? 'manual' : 'failed',
+            pdfFilename: ref.pdfFilename,
+            error: ref.error || (ref.status === 'manual' ? 'Manual citation (no external link)' : undefined),
+            anchorId: ref.anchorId,
+          })),
+        });
+        setLoading(false);
+        return;
+      }
+
       setStartTime(Date.now());
 
       // Step 2: Process references with controlled client-side parallelism
       // Best practice: Process 4 references concurrently on client side
       // Each request is independent, so failures don't cascade
       // This is 3-4x faster than sequential but safer than server-side batch processing
-      const totalReferences = extractData.references.length;
-      const concurrency = Math.min(4, totalReferences); // Process 4 at a time (optimal balance)
+      const totalDownloadable = downloadableRefsForProcessing.length;
+      const concurrency = Math.min(4, totalDownloadable); // Process 4 at a time (optimal balance)
       
-      console.log(`Processing ${totalReferences} references with ${concurrency} concurrent requests`);
+      console.log(`Processing ${totalDownloadable} downloadable references with ${concurrency} concurrent requests`);
 
       try {
         // Process with controlled concurrency using a worker pool pattern
@@ -562,7 +633,7 @@ export default function Home({ initialUrl }: HomeProps = {}) {
           await Promise.all(workers);
         };
 
-        await processWithConcurrency(extractData.references, concurrency);
+        await processWithConcurrency(downloadableRefsForProcessing, concurrency);
 
         // Retry failed references once (only for network/timeout errors, not permanent failures)
         // Get current state of references for retry logic
@@ -583,6 +654,9 @@ export default function Home({ initialUrl }: HomeProps = {}) {
           
           // Sequential retry - reliable approach
           for (const ref of failedRefs) {
+            if (!ref.sourceUrl) {
+              continue;
+            }
             await processReference({
               id: ref.id,
               title: ref.title,
@@ -627,7 +701,8 @@ export default function Home({ initialUrl }: HomeProps = {}) {
       // Set result immediately so user can see results
       setResult({
         articleTitle: extractData.articleTitle,
-        totalReferences: extractData.references.length,
+        totalReferences: totalRefs,
+        downloadableReferences: downloadableRefsCount,
         successCount,
         failedCount,
         zipBase64: undefined, // Will be set later if ZIP creation succeeds
@@ -635,9 +710,16 @@ export default function Home({ initialUrl }: HomeProps = {}) {
           id: r.id,
           title: r.title,
           sourceUrl: r.sourceUrl,
-          status: r.status === 'downloaded' ? 'downloaded' : r.status === 'pending' ? 'failed' : 'failed',
+          anchorId: r.anchorId,
+          status:
+            r.status === 'pending' || r.status === 'processing'
+              ? 'failed'
+              : r.status,
           pdfFilename: r.pdfFilename,
-          error: r.error || (r.status === 'pending' ? 'Processing was interrupted' : undefined),
+          error:
+            r.status === 'pending' || r.status === 'processing'
+              ? r.error || 'Processing was interrupted'
+              : r.error,
         })),
       });
 
@@ -668,16 +750,24 @@ export default function Home({ initialUrl }: HomeProps = {}) {
         
         setResult({
           articleTitle: articleTitle || 'Partial Results',
-          totalReferences: references.length,
+          totalReferences: totalReferencesCount || references.length,
+          downloadableReferences: downloadableReferencesCount || references.filter((r) => r.sourceUrl).length,
           successCount,
           failedCount,
           references: currentRefs.map((r) => ({
             id: r.id,
             title: r.title,
             sourceUrl: r.sourceUrl,
-            status: r.status === 'downloaded' ? 'downloaded' : 'failed',
+            anchorId: r.anchorId,
+            status:
+              r.status === 'pending' || r.status === 'processing'
+                ? 'failed'
+                : r.status,
             pdfFilename: r.pdfFilename,
-            error: r.error || 'Processing was interrupted',
+            error:
+              r.status === 'pending' || r.status === 'processing'
+                ? r.error || 'Processing was interrupted'
+                : r.error,
           })),
         });
       }
@@ -779,7 +869,7 @@ export default function Home({ initialUrl }: HomeProps = {}) {
       // CSV rows
       const rows = result.references.map((ref) => {
         const title = `"${ref.title.replace(/"/g, '""')}"`;
-        const url = `"${ref.sourceUrl.replace(/"/g, '""')}"`;
+        const url = ref.sourceUrl ? `"${ref.sourceUrl.replace(/"/g, '""')}"` : '""';
         const status = ref.status;
         const error = ref.error ? `"${ref.error.replace(/"/g, '""')}"` : '';
         return [ref.id, title, url, status, error].join(',');
@@ -843,9 +933,15 @@ export default function Home({ initialUrl }: HomeProps = {}) {
     return secs > 0 ? `${mins}m ${secs}s` : `${mins}m`;
   };
 
-  const totalReferencesCount = references.length;
-  const processedSafe = totalReferencesCount > 0 ? Math.min(processedCount, totalReferencesCount) : processedCount;
-  const progress = totalReferencesCount > 0 ? (processedSafe / totalReferencesCount) * 100 : 0;
+  const effectiveTotalReferences = totalReferencesCount || references.length;
+  const processedSafe = effectiveTotalReferences > 0 ? Math.min(processedCount, effectiveTotalReferences) : processedCount;
+  const progress = effectiveTotalReferences > 0 ? (processedSafe / effectiveTotalReferences) * 100 : 0;
+  const downloadableRefsDisplay =
+    result?.downloadableReferences ??
+    downloadableReferencesCount ??
+    references.filter((ref) => ref.sourceUrl).length;
+  const totalRefsDisplay = result?.totalReferences ?? effectiveTotalReferences;
+  const manualRefsDisplay = Math.max(totalRefsDisplay - downloadableRefsDisplay, 0);
   const successCount = references.filter((r) => r.status === 'downloaded').length;
   const failedCount = references.filter((r) => r.status === 'failed').length;
   const processingCount = references.filter((r) => r.status === 'processing').length;
@@ -1303,13 +1399,28 @@ export default function Home({ initialUrl }: HomeProps = {}) {
                   </button>
                 )}
               </div>
-              <div className="grid grid-cols-3 gap-2 sm:gap-4 mb-6">
-                <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-3 sm:p-4 border border-gray-200 dark:border-gray-800">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 sm:gap-4 mb-6">
+                <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-3 sm:p-4 border border-gray-200 dark:border-gray-800 lg:col-span-1">
                   <div className="text-xs sm:text-sm text-gray-600 dark:text-gray-400 mb-1">Total References</div>
                   <div className="text-xl sm:text-2xl font-bold text-gray-900 dark:text-white">
                     {result.totalReferences}
                   </div>
                 </div>
+                <div className="bg-blue-50 dark:bg-blue-950/30 rounded-lg p-3 sm:p-4 border border-blue-200 dark:border-blue-900">
+                  <div className="text-xs sm:text-sm text-gray-600 dark:text-gray-400 mb-1">Downloadable Citations</div>
+                  <div className="text-xl sm:text-2xl font-bold text-blue-600 dark:text-blue-300">
+                    {downloadableRefsDisplay}
+                  </div>
+                </div>
+                <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-3 sm:p-4 border border-gray-200 dark:border-gray-800">
+                  <div className="text-xs sm:text-sm text-gray-600 dark:text-gray-400 mb-1">Manual Citations</div>
+                  <div className="text-xl sm:text-2xl font-bold text-gray-900 dark:text-white">
+                    {manualRefsDisplay}
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 sm:gap-4 mb-6">
                 <div className="bg-green-50 dark:bg-green-950/30 rounded-lg p-3 sm:p-4 border border-green-200 dark:border-green-900">
                   <div className="text-xs sm:text-sm text-gray-600 dark:text-gray-400 mb-1">Downloaded</div>
                   <div className="text-xl sm:text-2xl font-bold text-green-600 dark:text-green-400">
@@ -1377,7 +1488,8 @@ export default function Home({ initialUrl }: HomeProps = {}) {
                   </thead>
                   <tbody className="bg-white dark:bg-black divide-y divide-gray-200 dark:divide-gray-800">
                     {result.references.map((ref) => (
-                      <tr key={ref.id} className="hover:bg-gray-50 dark:hover:bg-gray-900 transition-colors">
+                      <Fragment key={ref.id}>
+                      <tr className="hover:bg-gray-50 dark:hover:bg-gray-900 transition-colors">
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-white font-medium">
                           {ref.id}
                         </td>
@@ -1393,17 +1505,41 @@ export default function Home({ initialUrl }: HomeProps = {}) {
                           </a>
                         </td>
                         <td className="px-6 py-4 text-sm max-w-xs">
-                          <a
-                            href={ref.sourceUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-                            className="text-blue-600 dark:text-blue-400 hover:underline break-all"
-                            title={ref.sourceUrl}
-                          >
-                            {ref.sourceUrl.length > 50
-                              ? `${ref.sourceUrl.substring(0, 50)}...`
-                              : ref.sourceUrl}
-                          </a>
+                          {ref.sourceUrl ? (
+                            <a
+                              href={ref.sourceUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-blue-600 dark:text-blue-400 hover:underline break-all"
+                              title={ref.sourceUrl}
+                            >
+                              {ref.sourceUrl.length > 50
+                                ? `${ref.sourceUrl.substring(0, 50)}...`
+                                : ref.sourceUrl}
+                            </a>
+                          ) : (
+                            <span className="text-gray-600 dark:text-gray-400 italic">
+                              Manual citation (no external link)
+                              {(() => {
+                                const manualUrl = getManualReferenceUrl(ref);
+                                return manualUrl ? (
+                                <>
+                                  {' '}
+                                  (
+                                  <a
+                                    href={manualUrl}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="text-blue-600 dark:text-blue-400 hover:underline"
+                                  >
+                                    view reference
+                                  </a>
+                                  )
+                                </>
+                                ) : null;
+                              })()}
+                            </span>
+                          )}
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm min-w-[120px]">
                           {ref.status === 'downloaded' ? (
@@ -1422,33 +1558,49 @@ export default function Home({ initialUrl }: HomeProps = {}) {
                                 Download
                               </button>
                             </div>
+                          ) : ref.status === 'manual' ? (
+                            <span className="px-3 py-1 inline-flex text-xs leading-5 font-semibold rounded-full bg-gray-100 dark:bg-gray-900 text-gray-800 dark:text-gray-200 border border-gray-200 dark:border-gray-800">
+                              Manual
+                            </span>
                           ) : (
-                            <div className="relative inline-block error-popup-container">
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  toggleErrorExpansion(ref.id);
-                                }}
-                                className="px-3 py-1 inline-flex items-center gap-1 text-xs leading-5 font-semibold rounded-full bg-red-100 dark:bg-red-950/50 text-red-800 dark:text-red-300 border border-red-200 dark:border-red-900 hover:bg-red-200 dark:hover:bg-red-900/70 transition-colors cursor-pointer"
-                                title={ref.error || 'Click to see error details'}
-                              >
-                                Failed
-                                {ref.error && (
-                                  <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d={expandedErrors.has(ref.id) ? "M5 15l7-7 7 7" : "M19 9l-7 7-7-7"} />
-                                  </svg>
-                                )}
-                              </button>
-                              {expandedErrors.has(ref.id) && ref.error && (
-                                <div className="absolute right-0 top-full mt-2 w-80 p-3 bg-red-50 dark:bg-red-950/50 border border-red-200 dark:border-red-900 rounded-lg shadow-lg z-10">
-                                  <div className="text-xs font-semibold text-red-800 dark:text-red-300 mb-1">Error Details:</div>
-                                  <div className="text-xs text-red-700 dark:text-red-400 break-words">{ref.error}</div>
-                                </div>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                toggleErrorExpansion(ref.id);
+                              }}
+                              className="px-3 py-1 inline-flex items-center gap-1 text-xs leading-5 font-semibold rounded-full bg-red-100 dark:bg-red-950/50 text-red-800 dark:text-red-300 border border-red-200 dark:border-red-900 hover:bg-red-200 dark:hover:bg-red-900/70 transition-colors cursor-pointer"
+                              title={ref.error || 'Click to see error details'}
+                              aria-expanded={expandedErrors.has(ref.id)}
+                              aria-controls={`error-details-${ref.id}`}
+                            >
+                              Failed
+                              {ref.error && (
+                                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d={expandedErrors.has(ref.id) ? "M5 15l7-7 7 7" : "M19 9l-7 7-7-7"} />
+                                </svg>
                               )}
-                            </div>
+                            </button>
                           )}
                         </td>
                       </tr>
+                      {ref.status === 'failed' && expandedErrors.has(ref.id) && ref.error && (
+                        <tr key={`${ref.id}-error`} className="bg-red-50 dark:bg-red-950/20">
+                          <td colSpan={4} className="px-6 py-4">
+                            <div
+                              id={`error-details-${ref.id}`}
+                              className="rounded-lg border border-red-200 dark:border-red-900 bg-white dark:bg-black shadow-sm p-4"
+                            >
+                              <div className="text-sm font-semibold text-red-800 dark:text-red-300 mb-1">
+                                Error Details
+                              </div>
+                              <p className="text-sm text-red-700 dark:text-red-400 break-words">
+                                {ref.error}
+                              </p>
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                      </Fragment>
                     ))}
                   </tbody>
                 </table>

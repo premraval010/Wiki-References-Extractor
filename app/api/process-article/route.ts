@@ -5,23 +5,25 @@ import {
   fetchArticleHtml,
   extractReferences,
 } from '@/lib/wiki';
-import type { ArticleMetadata } from '@/lib/wiki';
+import type { ArticleMetadata, Reference } from '@/lib/wiki';
 import { isPdfUrl, downloadPdf, renderUrlToPdf, sanitizeFilename } from '@/lib/pdf';
 import { createZip } from '@/lib/zip';
 
 export type ProcessArticleResponse = {
   articleTitle: string;
   totalReferences: number;
+  downloadableReferences?: number;
   successCount: number;
   failedCount: number;
   zipBase64?: string;
   references: {
     id: number;
     title: string;
-    sourceUrl: string;
-    status: 'downloaded' | 'failed';
+    sourceUrl?: string;
+    status: 'downloaded' | 'failed' | 'manual';
     pdfFilename?: string;
     error?: string;
+    anchorId?: string;
   }[];
 };
 
@@ -30,8 +32,13 @@ export type ExtractReferencesResponse = {
   references: {
     id: number;
     title: string;
-    sourceUrl: string;
+    sourceUrl?: string;
+    hasExternalLink: boolean;
+    anchorId?: string;
   }[];
+  totalReferences: number;
+  downloadableReferences: number;
+  manualReferences: number;
   metadata?: ArticleMetadata;
 };
 
@@ -73,10 +80,15 @@ export async function POST(request: NextRequest) {
     // Extract references
     const references = extractReferences(html);
 
+    const downloadableRefs = references.filter(
+      (ref): ref is Reference & { sourceUrl: string } => Boolean(ref.sourceUrl)
+    );
+
     if (references.length === 0) {
       return NextResponse.json({
         articleTitle,
         totalReferences: 0,
+        downloadableReferences: 0,
         successCount: 0,
         failedCount: 0,
         references: [],
@@ -87,7 +99,7 @@ export async function POST(request: NextRequest) {
     const processedReferences: ProcessArticleResponse['references'] = [];
     const files: { filename: string; content: Buffer }[] = [];
 
-    for (const ref of references) {
+    for (const ref of downloadableRefs) {
       try {
         let pdfBuffer: Buffer;
         let pdfFilename: string;
@@ -119,6 +131,7 @@ export async function POST(request: NextRequest) {
           sourceUrl: ref.sourceUrl,
           status: 'downloaded',
           pdfFilename,
+          anchorId: ref.anchorId,
         });
       } catch (error) {
         processedReferences.push({
@@ -127,6 +140,7 @@ export async function POST(request: NextRequest) {
           sourceUrl: ref.sourceUrl,
           status: 'failed',
           error: error instanceof Error ? error.message : 'Unknown error',
+          anchorId: ref.anchorId,
         });
       }
     }
@@ -146,6 +160,7 @@ export async function POST(request: NextRequest) {
     const response: ProcessArticleResponse = {
       articleTitle,
       totalReferences: references.length,
+      downloadableReferences: downloadableRefs.length,
       successCount: processedReferences.filter((r) => r.status === 'downloaded').length,
       failedCount: processedReferences.filter((r) => r.status === 'failed').length,
       zipBase64,

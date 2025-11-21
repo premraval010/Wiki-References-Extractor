@@ -3,7 +3,9 @@ import * as cheerio from 'cheerio';
 export type Reference = {
   id: number;
   title: string;
-  sourceUrl: string;
+  sourceUrl?: string;
+  hasExternalLink: boolean;
+  anchorId?: string;
 };
 
 /**
@@ -298,18 +300,20 @@ export async function fetchArticleHtml(url: string): Promise<string> {
 export function extractReferences(html: string): Reference[] {
   const $ = cheerio.load(html);
   const references: Reference[] = [];
-  const seenUrls = new Set<string>();
-  const seenIds = new Set<string>();
   const referenceElements = new Set<cheerio.Element>();
   let id = 1;
 
   const selectors = [
+    'li[id^="cite_note"]',
+    'ol.references > li',
     'ol.references li',
-    'div.reflist li',
-    'div.references li',
-    'section.references li',
+    '.mw-references-wrap ol > li',
     '.mw-references-wrap li',
+    '.references ol > li',
+    '.references li',
+    '.reflist li',
     'li.reference',
+    '.citation .reference-text',
   ];
 
   selectors.forEach((selector) => {
@@ -318,39 +322,57 @@ export function extractReferences(html: string): Reference[] {
     });
   });
 
-  const normalizeUrl = (url: string): string => {
-    try {
-      const parsed = new URL(url);
-      parsed.hash = '';
-      parsed.hostname = parsed.hostname.toLowerCase();
-      parsed.protocol = parsed.protocol.toLowerCase();
-      // Remove common tracking params
-      const paramsToRemove = ['utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content', 'clid'];
-      paramsToRemove.forEach((param) => parsed.searchParams.delete(param));
-      parsed.searchParams.sort();
-      let pathname = parsed.pathname.replace(/\/+$/, '');
-      if (!pathname) {
-        pathname = '/';
+  // If we somehow still have no reference elements, fall back to any list item under a References heading
+  if (referenceElements.size === 0) {
+    $('h2, h3').each((_, heading) => {
+      const $heading = $(heading);
+      const headingText = $heading.text().toLowerCase();
+      if (headingText.includes('reference') || headingText.includes('citation') || headingText.includes('notes')) {
+        let $next = $heading.next();
+        const maxTraverse = 5;
+        let traversed = 0;
+        while ($next.length && traversed < maxTraverse) {
+          if ($next.is('ol') || $next.is('ul')) {
+            $next.find('li').each((_, element) => referenceElements.add(element));
+            break;
+          }
+          $next = $next.next();
+          traversed += 1;
+        }
       }
-      const search = parsed.searchParams.toString();
-      return `${parsed.protocol}//${parsed.hostname}${pathname}${search ? `?${search}` : ''}`;
-    } catch {
-      return url;
-    }
-  };
+    });
+  }
 
-  const findPrimaryExternalLink = ($element: cheerio.Cheerio): string | null => {
-    const $links = $element.find('a[href^="http"]');
-    for (let i = 0; i < $links.length; i++) {
-      const href = $links.eq(i).attr('href');
-      if (!href) continue;
-      if (href.includes('/wiki/') && href.includes('wikipedia.org')) continue;
+  const normalizeExternalHref = (href: string): string | null => {
+    if (!href) return null;
+    if (href.startsWith('//')) {
+      return `https:${href}`;
+    }
+    if (href.startsWith('http://') || href.startsWith('https://')) {
       return href;
     }
     return null;
   };
 
-  const extractTitle = ($element: cheerio.Cheerio, sourceUrl: string): string => {
+  const findPrimaryExternalLink = (
+    $element: cheerio.Cheerio
+  ): { rawHref: string; absoluteUrl: string } | null => {
+    const $links = $element.find('a[href]');
+    for (let i = 0; i < $links.length; i++) {
+      const href = $links.eq(i).attr('href');
+      if (!href) continue;
+      const absoluteUrl = normalizeExternalHref(href);
+      if (!absoluteUrl) continue;
+      if (absoluteUrl.includes('/wiki/') && absoluteUrl.includes('wikipedia.org')) continue;
+      return { rawHref: href, absoluteUrl };
+    }
+    return null;
+  };
+
+  const extractTitle = (
+    $element: cheerio.Cheerio,
+    hrefDetails?: { rawHref: string; absoluteUrl: string }
+  ): string => {
     const $cite = $element.find('cite');
     if ($cite.length > 0) {
       const citeText = $cite.text().trim();
@@ -359,15 +381,17 @@ export function extractReferences(html: string): Reference[] {
       }
     }
 
-    const $matchingLink = $element.find(`a[href="${sourceUrl}"]`).first();
-    if ($matchingLink.length > 0) {
-      const linkText = $matchingLink.text().trim();
-      if (linkText) {
-        return linkText.replace(/\s+/g, ' ').replace(/\[\d+\]/g, '').trim();
+    if (hrefDetails) {
+      const $matchingLink = $element.find(`a[href="${hrefDetails.rawHref}"]`).first();
+      if ($matchingLink.length > 0) {
+        const linkText = $matchingLink.text().trim();
+        if (linkText) {
+          return linkText.replace(/\s+/g, ' ').replace(/\[\d+\]/g, '').trim();
+        }
       }
     }
 
-    const firstExternalLink = $element.find('a[href^="http"]').first();
+    const firstExternalLink = $element.find('a[href^="http"], a[href^="//"]').first();
     if (firstExternalLink.length > 0) {
       const linkText = firstExternalLink.text().trim();
       if (linkText) {
@@ -388,31 +412,15 @@ export function extractReferences(html: string): Reference[] {
 
   referenceElements.forEach((element) => {
     const $element = $(element);
-    const elementId = $element.attr('id');
-    if (elementId && seenIds.has(elementId)) {
-      return;
-    }
-    if (elementId) {
-      seenIds.add(elementId);
-    }
-
-    const sourceUrl = findPrimaryExternalLink($element);
-    if (!sourceUrl) {
-      return;
-    }
-
-    const normalizedUrl = normalizeUrl(sourceUrl);
-    if (seenUrls.has(normalizedUrl)) {
-      return;
-    }
-
-    seenUrls.add(normalizedUrl);
-    const title = extractTitle($element, sourceUrl);
+    const hrefDetails = findPrimaryExternalLink($element);
+    const title = extractTitle($element, hrefDetails || undefined);
 
     references.push({
       id: id++,
       title,
-      sourceUrl,
+      sourceUrl: hrefDetails?.absoluteUrl,
+      hasExternalLink: Boolean(hrefDetails?.absoluteUrl),
+      anchorId: $element.attr('id') || undefined,
     });
   });
 

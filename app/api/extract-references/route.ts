@@ -46,9 +46,15 @@ export async function POST(request: NextRequest) {
     // Extract references
     const references = extractReferences(html);
 
+    const totalReferences = references.length;
+    const downloadableReferences = references.filter((ref) => ref.sourceUrl).length;
+
     const response: ExtractReferencesResponse = {
       articleTitle,
       references,
+      totalReferences,
+      downloadableReferences,
+      manualReferences: Math.max(totalReferences - downloadableReferences, 0),
       metadata, // Include metadata in response
     };
 
