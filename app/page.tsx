@@ -360,7 +360,8 @@ export default function Home({ initialUrl }: HomeProps = {}) {
     }
   };
 
-  const createZipFromBuffers = async (refs: ReferenceStatus[]): Promise<string | null> => {
+  // Create a ZIP blob from the in‑memory PDF buffers
+  const createZipFromBuffers = async (refs: ReferenceStatus[]): Promise<Blob | null> => {
     // Get only successfully downloaded references that have buffers in memory
     const downloadedRefs = refs.filter(
       (r) => r.status === 'downloaded' && 
@@ -394,23 +395,14 @@ export default function Home({ initialUrl }: HomeProps = {}) {
         throw new Error('No valid PDF files found to add to ZIP');
       }
 
-      // Generate ZIP file as base64
+      // Generate ZIP file as a Blob
       const zipBlob = await zip.generateAsync({
         type: 'blob',
         compression: 'DEFLATE',
         compressionOptions: { level: 6 }, // Balanced compression
       });
 
-      // Convert blob to base64
-      return new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => {
-          const base64 = (reader.result as string).split(',')[1]; // Remove data:application/zip;base64, prefix
-          resolve(base64);
-        };
-        reader.onerror = () => reject(new Error('Failed to convert ZIP to base64'));
-        reader.readAsDataURL(zipBlob);
-      });
+      return zipBlob;
     } catch (err) {
       console.error('Failed to create ZIP:', err);
       throw err; // Re-throw to let caller handle it
@@ -705,7 +697,7 @@ export default function Home({ initialUrl }: HomeProps = {}) {
         downloadableReferences: downloadableRefsCount,
         successCount,
         failedCount,
-        zipBase64: undefined, // Will be set later if ZIP creation succeeds
+        // We now generate the ZIP only on demand in handleDownloadZip
         references: finalRefs.map((r) => ({
           id: r.id,
           title: r.title,
@@ -722,23 +714,6 @@ export default function Home({ initialUrl }: HomeProps = {}) {
               : r.error,
         })),
       });
-
-      // Step 5: Try to create ZIP in background (non-blocking, client-side)
-      // Use the PDF buffers we already have in memory - much faster!
-      if (successCount > 0) {
-        // Create ZIP client-side from existing buffers (no server call needed)
-        createZipFromBuffers(finalRefs)
-          .then((zipBase64) => {
-            if (zipBase64) {
-              // Update result with ZIP
-              setResult((prev) => prev ? { ...prev, zipBase64 } : prev);
-            }
-          })
-          .catch((zipError) => {
-            console.error('Background ZIP creation failed (non-blocking):', zipError);
-            // Don't show error - user can create ZIP manually via button
-          });
-      }
     } catch (err) {
       console.error('Error in handleSubmit:', err);
       
@@ -819,9 +794,9 @@ export default function Home({ initialUrl }: HomeProps = {}) {
       }
 
       // Create ZIP on-demand from current buffers (client-side, fast!)
-      const zipBase64 = await createZipFromBuffers(references);
+      const zipBlob = await createZipFromBuffers(references);
       
-      if (!zipBase64) {
+      if (!zipBlob) {
         setError('Failed to create ZIP file. Please try again.');
         if (button) {
           button.disabled = false;
@@ -830,12 +805,8 @@ export default function Home({ initialUrl }: HomeProps = {}) {
         return;
       }
 
-      // Download the ZIP
-      const byteCharacters = atob(zipBase64);
-      const byteNumbers = Array.from(byteCharacters, (c) => c.charCodeAt(0));
-      const byteArray = new Uint8Array(byteNumbers);
-      const blob = new Blob([byteArray], { type: 'application/zip' });
-      const url = URL.createObjectURL(blob);
+      // Download the ZIP directly from the Blob
+      const url = URL.createObjectURL(zipBlob);
       const a = document.createElement('a');
       a.href = url;
       a.download = `${articleTitle || 'wikipedia-refs'}.zip`.replace(/[^a-z0-9._-]/gi, '_');

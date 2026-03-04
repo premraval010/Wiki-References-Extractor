@@ -16,7 +16,7 @@ const ogImageUrl = `${baseUrl}/wiki-ref-downloader-cover.jpg`;
 
 export const metadata: Metadata = {
   metadataBase: new URL(baseUrl),
-  title: "Download All Wikipedia References as PDFs – Free Wiki Reference Downloader",
+  title: "Download All Wikipedia References as PDFs | Free Wiki Reference Downloader",
   description: "Convert any Wikipedia article's references into downloadable PDFs instantly. Paste a Wikipedia link and get all citations bundled into a clean ZIP file. Fast, simple, accurate, and built for researchers, students, and knowledge workers.",
   keywords: [
     "Wikipedia References Downloader",
